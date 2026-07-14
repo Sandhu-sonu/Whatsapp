@@ -1,0 +1,21 @@
+2026/07/13-09:25:48.580 2980 Reusing MANIFEST D:\whatsapp\playwright-profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/07/13-09:25:48.584 2980 Recovering log #39
+2026/07/13-09:25:48.586 2980 Reusing old log D:\whatsapp\playwright-profile\Default\Local Storage\leveldb/000039.log 
+2026/07/13-09:38:16.021 2980 Level-0 table #43: started
+2026/07/13-09:38:16.027 2980 Level-0 table #43: 15818 bytes OK
+2026/07/13-09:38:16.032 2980 Delete type=0 #39
+2026/07/13-11:34:51.945 5f90 Level-0 table #45: started
+2026/07/13-11:34:51.966 5f90 Level-0 table #45: 10958 bytes OK
+2026/07/13-11:34:51.973 5f90 Delete type=0 #42
+2026/07/13-11:34:51.976 5f90 Compacting 4@0 + 1@1 files
+2026/07/13-11:34:51.989 5f90 Generated table #46@0: 243 keys, 14590 bytes
+2026/07/13-11:34:51.990 5f90 Compacted 4@0 + 1@1 files => 14590 bytes
+2026/07/13-11:34:51.992 5f90 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/07/13-11:34:51.994 5f90 Delete type=2 #34
+2026/07/13-11:34:51.995 5f90 Delete type=2 #37
+2026/07/13-11:34:51.995 5f90 Delete type=2 #40
+2026/07/13-11:34:51.996 5f90 Delete type=2 #43
+2026/07/13-11:34:51.996 5f90 Delete type=2 #45
+2026/07/13-12:36:48.288 5f90 Level-0 table #48: started
+2026/07/13-12:36:48.303 5f90 Level-0 table #48: 12061 bytes OK
+2026/07/13-12:36:48.308 5f90 Delete type=0 #44

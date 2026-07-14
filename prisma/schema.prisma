@@ -1,0 +1,111 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model District {
+  id           String            @id @default(uuid())
+  name         String            @unique
+  code         String            @unique
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  submissions  DailySubmission[]
+  messages     WhatsAppMessage[]
+  aliases      DistrictAlias[]
+  reports      DsdReport[]
+}
+
+model DistrictAlias {
+  id         String   @id @default(uuid())
+  alias      String   @unique
+  districtId String
+  district   District @relation(fields: [districtId], references: [id], onDelete: Cascade)
+}
+
+model DailySubmission {
+  id          String      @id @default(uuid())
+  districtId  String
+  district    District    @relation(fields: [districtId], references: [id], onDelete: Cascade)
+  reportDate  DateTime    // Normalized date (YYYY-MM-DD at 00:00:00 UTC)
+  submittedAt DateTime?
+  status      String      @default("PENDING") // "SUBMITTED" | "PENDING"
+  createdAt   DateTime    @default(now())
+  reports     DsdReport[]
+
+  @@unique([districtId, reportDate])
+}
+
+model DsdReport {
+  id                 String           @id @default(uuid())
+  submissionId       String
+  submission         DailySubmission  @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  messageId          String?          @unique
+  message            WhatsAppMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  districtId         String
+  district           District         @relation(fields: [districtId], references: [id], onDelete: Cascade)
+  reportDate         DateTime
+  receivedAt         DateTime
+  previousReportId   String?
+  appointmentsBooked Int
+  served             Int
+  cancelled          Int
+  rescheduled        Int
+  validationStatus   String           // "VALID" | "WARNING" | "INVALID"
+  validationErrors   String?          // JSON array string
+  confidence         Int              // 0 - 100
+  isLatest           Boolean          @default(true)
+  revisionNumber     Int              @default(0)
+  metricsJson        String?          // For future/extra metrics only
+  parserVersion      String           @default("v1.0.0")
+  parserMode         String           // "TEMPLATE" | "REGEX" | "KEYWORD" | "MANUAL"
+  createdAt          DateTime         @default(now())
+}
+
+model WhatsAppMessage {
+  id              String    @id @default(uuid())
+  whatsappId      String    @unique
+  sender          String?
+  senderNumber    String?
+  isFromMe        Boolean   @default(false)
+  message         String
+  messageHash     String?
+  messageType     String    @default("TEXT") // TEXT | IMAGE | DOCUMENT | VIDEO | AUDIO | STICKER | UNKNOWN
+  ingestionStatus String    @default("NEW") // NEW | PARSED | FAILED | IGNORED
+  receivedAt      DateTime
+  districtId      String?
+  district        District? @relation(fields: [districtId], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+  dsdReport       DsdReport?
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  action     String      // REPORT_REPLAY | REPORT_APPROVED | REPORT_CORRECTED | REPORT_REJECTED | MANUAL_REVIEW | SETTINGS_CHANGED | DATABASE_BACKUP | DATABASE_RESTORE | LOGIN | LOGOUT
+  entity     String
+  entityId   String
+  beforeJson String?
+  afterJson  String?
+  userId     String?
+  userName   String      @default("Operator")
+  timestamp  DateTime    @default(now())
+}
+
+model SystemNotification {
+  id        String               @id @default(uuid())
+  type      String               // INFO | SUCCESS | WARNING | ERROR
+  category  String               // OPERATIONAL | TECHNICAL | SYSTEM
+  title     String
+  message   String
+  read      Boolean              @default(false)
+  createdAt DateTime             @default(now())
+}
