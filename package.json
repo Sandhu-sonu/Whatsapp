@@ -60,13 +60,11 @@
       "dist-electron/**/*",
       "prisma/**/*",
       "node_modules/**/*",
-      "node_modules/.prisma/**/*",
       "package.json"
     ],
     "asar": true,
     "asarUnpack": [
-      "**/node_modules/.prisma/**/*",
-      "**/node_modules/@prisma/client/**/*"
+      "**/node_modules/prisma-client/**/*"
     ],
     "win": {
       "target": [

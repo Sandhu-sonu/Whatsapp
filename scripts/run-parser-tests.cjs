@@ -1,4 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
+const { PrismaClient } = require('prisma-client');
 const { parseReport } = require('../dist-electron/src/lib/parser/pipeline');
 const { SubmissionRepository } = require('../dist-electron/src/repositories/SubmissionRepository');
 
