@@ -1,8 +1,11 @@
-import { PrismaClient } from 'prisma-client';
+import { PrismaClient } from '../generated/prisma-client';
 import path from 'path';
 import fs from 'fs';
 
-let databaseUrl = 'file:./database/dsd-tracker.db';
+const absoluteDbPath = __dirname.includes('dist-electron')
+  ? path.resolve(__dirname, '../../../prisma/database/dsd-tracker.db')
+  : path.resolve(__dirname, '../../prisma/database/dsd-tracker.db');
+let databaseUrl = `file:${absoluteDbPath}`;
 
 // Check if we are in the Node/Electron Main process environment
 if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
