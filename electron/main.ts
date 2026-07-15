@@ -312,11 +312,15 @@ ipcMain.handle('db-create-notification', async (_event, type: any, category: any
 
 // --- BACKUP & RESTORE IPC HANDLERS ---
 const getDbPath = () => {
+  if (app.isPackaged) {
+    return path.join(app.getPath('userData'), 'dsd-tracker.db');
+  }
   return path.join(app.getAppPath(), 'database', 'dsd-tracker.db');
 };
 
 const getBackupsDir = () => {
-  const dir = path.join(app.getAppPath(), 'database', 'backups');
+  const baseDir = app.isPackaged ? app.getPath('userData') : app.getAppPath();
+  const dir = path.join(baseDir, app.isPackaged ? 'backups' : 'database/backups');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

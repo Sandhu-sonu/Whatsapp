@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import path from 'path';
+import fs from 'fs';
 
 let databaseUrl = 'file:./database/dsd-tracker.db';
 
@@ -10,11 +11,23 @@ if (typeof process !== 'undefined' && process.versions && process.versions.elect
     const { app } = require('electron');
     if (app) {
       const isDev = !app.isPackaged;
-      if (!isDev) {
-        const userDataPath = app.getPath('userData');
-        const dbPath = path.join(userDataPath, 'dsd-tracker.db');
-        databaseUrl = `file:${dbPath}`;
+      const dbDir = isDev
+        ? path.join(app.getAppPath(), 'database')
+        : app.getPath('userData');
+
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
       }
+
+      const activeDbPath = path.join(dbDir, 'dsd-tracker.db');
+      if (!fs.existsSync(activeDbPath)) {
+        const templateDbPath = path.join(app.getAppPath(), 'prisma', 'database', 'dsd-tracker.db');
+        if (fs.existsSync(templateDbPath)) {
+          fs.copyFileSync(templateDbPath, activeDbPath);
+        }
+      }
+
+      databaseUrl = `file:${activeDbPath}`;
     }
   } catch (e) {
     // Fallback if imported in non-main environment

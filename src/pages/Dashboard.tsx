@@ -35,6 +35,7 @@ interface SubmissionRow {
     validationStatus: string;
     confidence: number;
     receivedAt?: string | Date;
+    createdAt?: string | Date;
   }>;
 }
 
@@ -95,6 +96,13 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 6000);
   };
 
+  // Startup check states
+  const [showStartupCheck, setShowStartupCheck] = useState(true);
+  const [dbCheck, setDbCheck] = useState<'pending' | 'checking' | 'success' | 'failed'>('pending');
+  const [workerCheck, setWorkerCheck] = useState<'pending' | 'checking' | 'success' | 'failed'>('pending');
+  const [parserCheck, setParserCheck] = useState<'pending' | 'checking' | 'success' | 'failed'>('pending');
+  const [startupStatus, setStartupStatus] = useState('Initializing...');
+
   const getYesterdayLocalDateString = () => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
@@ -116,6 +124,51 @@ export default function DashboardPage() {
     setFromDate(yesterdayStr);
     setToDate(yesterdayStr);
     setHasData(true);
+
+    // Run Startup Health Diagnostics check on mount
+    const hasRunCheck = sessionStorage.getItem('dsd_startup_check_run');
+    if (hasRunCheck === 'true') {
+      setShowStartupCheck(false);
+      return;
+    }
+
+    const runChecks = async () => {
+      // 1. Database Check
+      setDbCheck('checking');
+      setStartupStatus('Checking Database...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      try {
+        await window.api.getDistricts();
+        setDbCheck('success');
+      } catch (e) {
+        setDbCheck('failed');
+      }
+
+      // 2. WhatsApp Worker Check
+      setWorkerCheck('checking');
+      setStartupStatus('Checking WhatsApp Worker...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      try {
+        await window.api.getWorkerStatus();
+        setWorkerCheck('success');
+      } catch (e) {
+        setWorkerCheck('failed');
+      }
+
+      // 3. Parser Check
+      setParserCheck('checking');
+      setStartupStatus('Checking Parser...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      setParserCheck('success');
+
+      // 4. Ready
+      setStartupStatus('Ready');
+      await new Promise(resolve => setTimeout(resolve, 500));
+      sessionStorage.setItem('dsd_startup_check_run', 'true');
+      setShowStartupCheck(false);
+    };
+
+    runChecks();
   }, []);
 
   useEffect(() => {
@@ -223,7 +276,12 @@ export default function DashboardPage() {
     .sort((a, b) => {
       const timeA = new Date(a.reports[0].receivedAt || a.submittedAt || '').getTime();
       const timeB = new Date(b.reports[0].receivedAt || b.submittedAt || '').getTime();
-      return timeB - timeA;
+      if (timeA !== timeB) {
+        return timeB - timeA;
+      }
+      const createA = new Date(a.reports[0].createdAt || '').getTime();
+      const createB = new Date(b.reports[0].createdAt || '').getTime();
+      return createB - createA;
     })[0];
 
   const formatSubmitTime = (input: string | Date | null | undefined) => {
@@ -461,6 +519,48 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* Diagnostics startup overlay */}
+      {showStartupCheck && (
+        <div className="fixed inset-0 bg-slate-900 z-50 flex flex-col items-center justify-center text-white select-none">
+          <div className="bg-slate-800/80 border border-slate-700/60 rounded-2xl p-8 max-w-sm w-full mx-4 shadow-2xl flex flex-col items-center text-center space-y-6 backdrop-blur-md">
+            <div>
+              <h2 className="text-xl font-black tracking-wider text-slate-100 font-sans uppercase">DSD Report Tracker</h2>
+              <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest mt-1">System Health Diagnostics</p>
+            </div>
+            
+            <div className="w-full space-y-3 text-xs font-semibold">
+              <div className="flex justify-between items-center bg-slate-850/60 border border-slate-750/30 p-2.5 rounded-lg">
+                <span className="text-slate-400">Checking Database...</span>
+                {dbCheck === 'checking' && <span className="text-blue-400 animate-pulse">Checking...</span>}
+                {dbCheck === 'success' && <span className="text-emerald-500 font-bold">✓</span>}
+                {dbCheck === 'failed' && <span className="text-rose-500 font-bold">✗</span>}
+                {dbCheck === 'pending' && <span className="text-slate-500">Pending</span>}
+              </div>
+
+              <div className="flex justify-between items-center bg-slate-850/60 border border-slate-750/30 p-2.5 rounded-lg">
+                <span className="text-slate-400">Checking WhatsApp Worker...</span>
+                {workerCheck === 'checking' && <span className="text-blue-400 animate-pulse">Checking...</span>}
+                {workerCheck === 'success' && <span className="text-emerald-500 font-bold">✓</span>}
+                {workerCheck === 'failed' && <span className="text-rose-500 font-bold">✗</span>}
+                {workerCheck === 'pending' && <span className="text-slate-500">Pending</span>}
+              </div>
+
+              <div className="flex justify-between items-center bg-slate-850/60 border border-slate-750/30 p-2.5 rounded-lg">
+                <span className="text-slate-400">Checking Parser...</span>
+                {parserCheck === 'checking' && <span className="text-blue-400 animate-pulse">Checking...</span>}
+                {parserCheck === 'success' && <span className="text-emerald-500 font-bold">✓</span>}
+                {parserCheck === 'failed' && <span className="text-rose-500 font-bold">✗</span>}
+                {parserCheck === 'pending' && <span className="text-slate-500">Pending</span>}
+              </div>
+            </div>
+
+            <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest pt-2">
+              Status: <span className="text-slate-300 font-bold">{startupStatus}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

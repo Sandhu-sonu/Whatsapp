@@ -407,7 +407,7 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
       let scrollContainer: Element | null = null;
       for (const selector of scrollSelectors) {
         const el = document.querySelector(selector);
-        if (el && el.scrollHeight > el.clientHeight) {
+        if (el) {
           scrollContainer = el;
           break;
         }

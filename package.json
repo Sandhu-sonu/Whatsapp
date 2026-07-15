@@ -10,7 +10,8 @@
     "build": "npx tsc --noEmit && npx vite build && npx tsc -p tsconfig.electron.json && node scripts/write-dist-package.js",
     "electron:start": "electron .",
     "prisma:generate": "prisma generate",
-    "seed": "npx ts-node prisma/seed.ts"
+    "seed": "npx ts-node prisma/seed.ts",
+    "package": "npm run build && electron-builder build --win"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -47,5 +48,49 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.5.2",
     "vite": "^5.3.1"
+  },
+  "build": {
+    "appId": "com.dsd.tracker",
+    "productName": "DSD Report Tracker",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "prisma/**/*",
+      "node_modules/**/*",
+      "node_modules/.prisma/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/.prisma/**/*",
+      "**/node_modules/@prisma/client/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DSD Report Tracker",
+      "runAfterFinish": true
+    }
   }
 }

@@ -35,6 +35,7 @@ export interface AppApi {
       confidence: number;
       validationErrors?: string | null;
       receivedAt?: string;
+      createdAt?: string;
     }>;
   }>>;
   getDistrictHistory: (districtId: string, fromDate: string, toDate: string) => Promise<Array<{
