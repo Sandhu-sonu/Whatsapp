@@ -417,7 +417,7 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
         console.log('[Observer] Scroll container found. Starting automatic history load...');
         
         let scrollCount = 0;
-        const maxScrolls = 8; // Scroll up 8 times to load older messages
+        const maxScrolls = 40; // Scroll up 40 times to load older messages
         
         const performScroll = () => {
           if (scrollCount >= maxScrolls) {
