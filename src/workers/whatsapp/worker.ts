@@ -114,47 +114,27 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
     await searchBox.fill('');
     await searchBox.type(groupName, { delay: 50 });
 
-    // Wait for search results
-    await page.waitForSelector('[data-testid="cell-frame-title"] span[title]', {
-      timeout: 15000,
+    // Wait for search results and select the matching chat
+    sendLog('info', `[Worker] Waiting for chat result to appear...`);
+    const escapedGroupName = groupName.replace(/"/g, '\\"');
+    const chatLocator = page.locator(`span[title="${escapedGroupName}" i]`).first();
+    
+    await chatLocator.waitFor({ state: 'visible', timeout: 15000 });
+    sendLog('info', `[Worker] Chat found, clicking to open...`);
+
+    // Click the whole chat row instead of the title
+    await chatLocator.evaluate((el) => {
+      const htmlEl = el as HTMLElement;
+      const row = htmlEl.closest('[data-testid="list-item"]') as HTMLElement | null;
+      if (row) {
+        row.click();
+      } else {
+        htmlEl.click();
+      }
     });
 
-    // Give WhatsApp a moment to populate search results
-    await page.waitForTimeout(1000);
-
-    // Take a snapshot of matching elements
-    const titleElements = await page
-      .locator('[data-testid="cell-frame-title"] span[title]')
-      .elementHandles();
-
-    let found = false;
-
-    for (const element of titleElements) {
-      const title = ((await element.getAttribute('title')) || '').trim();
-
-      sendLog('info', `Found chat: ${title}`);
-
-      if (title.toLowerCase() === groupName.toLowerCase()) {
-        sendLog('info', `Opening group: ${title}`);
-
-        // Click the whole chat row instead of the title
-        await element.evaluate((el) => {
-          const htmlEl = el as HTMLElement;
-          const row = htmlEl.closest('[data-testid="list-item"]') as HTMLElement | null;
-
-          if (row) {
-            row.click();
-          } else {
-            htmlEl.click();
-          }
-        });
-
-        await page.waitForTimeout(1000);
-
-        found = true;
-        break;
-      }
-    }
+    await page.waitForTimeout(1500);
+    let found = true;
 
     if (!found) {
       const visibleTitles = await page
