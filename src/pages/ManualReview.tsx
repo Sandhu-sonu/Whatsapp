@@ -88,8 +88,13 @@ export default function ManualReviewPage() {
     
     // Default to report date split, but if it starts with 1970 sentinel, default to empty
     const rDate = report.submission.reportDate;
-    if (rDate && !rDate.startsWith('1970-01-01')) {
-      setCorrectedDate(rDate.split('T')[0]);
+    if (rDate) {
+      const dateStr = typeof rDate === 'string' ? rDate : (rDate as Date).toISOString();
+      if (!dateStr.startsWith('1970-01-01')) {
+        setCorrectedDate(dateStr.split('T')[0]);
+      } else {
+        setCorrectedDate('');
+      }
     } else {
       setCorrectedDate('');
     }
@@ -136,14 +141,16 @@ export default function ManualReviewPage() {
     }
   };
 
-  const formatReportDate = (dateStr: string) => {
-    if (!dateStr || dateStr.startsWith('1970-01-01')) {
+  const formatReportDate = (dateVal: any) => {
+    if (!dateVal) return 'Missing Report Date';
+    const dateStr = typeof dateVal === 'string' ? dateVal : (dateVal as Date).toISOString();
+    if (dateStr.startsWith('1970-01-01')) {
       return 'Missing Report Date';
     }
     try {
       return new Date(dateStr).toLocaleDateString('en-IN');
     } catch (e) {
-      return dateStr;
+      return String(dateVal);
     }
   };
 
