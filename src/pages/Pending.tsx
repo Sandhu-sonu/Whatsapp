@@ -87,7 +87,9 @@ export default function PendingPage() {
   const generateReminderText = () => {
     if (pendingDistricts.length === 0) return '';
     const bullets = pendingDistricts.map(d => `• ${d.name}`).join('\n');
-    return `*Reminder*\n\nThe following districts have not submitted today's DSD Performance Report:\n\n${bullets}\n\nKindly submit the report at the earliest.`;
+    const formattedDate = reportDate ? reportDate.split('-').reverse().join('-') : '';
+    const dateText = formattedDate ? `the DSD Performance Report of ${formattedDate}` : "today's DSD Performance Report";
+    return `*Reminder*\n\nThe following districts have not submitted ${dateText}:\n\n${bullets}\n\nKindly submit the report at the earliest.`;
   };
 
   const handleCopyReminder = () => {
