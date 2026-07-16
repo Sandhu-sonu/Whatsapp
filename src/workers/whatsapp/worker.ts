@@ -283,7 +283,7 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
 
       const seenIds = new Set<string>();
 
-      const processMessage = (el: Element) => {
+      const processMessage = (el: Element, timeOffsetMs: number = 0) => {
         // Some WhatsApp Web builds don't put data-id directly on the
         // message container, and the mutation target is often a deep
         // child (e.g. the text span), not the id-bearing wrapper. Check
@@ -386,7 +386,7 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
           isFromMe,
           message,
           messageType,
-          receivedAt: new Date().toISOString(),
+          receivedAt: new Date(Date.now() + timeOffsetMs).toISOString(),
         });
       };
 
@@ -394,8 +394,8 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
       // This ensures that any reports submitted while the worker was offline
       // are captured and ingested on startup.
       console.log('[Observer] Processing recent history backlog...');
-      document.querySelectorAll('[data-id]').forEach((el) => {
-        processMessage(el);
+      document.querySelectorAll('[data-id]').forEach((el, index) => {
+        processMessage(el, index);
       });
 
       // Automatic history load: Scroll up the chat container to load older messages
@@ -443,6 +443,7 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
 
       const observer = new MutationObserver((mutations) => {
         try {
+          let mutationIndex = 0;
           for (const mutation of mutations) {
             if (mutation.type === 'childList') {
               mutation.addedNodes.forEach((node) => {
@@ -452,18 +453,18 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
                 // Case 1: Check if the added node itself or its ancestor has data-id
                 const parentIdSource = el.closest('[data-id]');
                 if (parentIdSource) {
-                  processMessage(parentIdSource);
+                  processMessage(parentIdSource, mutationIndex++);
                 }
 
                 // Case 2: Check if the added node contains children with data-id
                 el.querySelectorAll?.('[data-id]').forEach((child) => {
-                  processMessage(child);
+                  processMessage(child, mutationIndex++);
                 });
               });
             } else if (mutation.type === 'attributes' && mutation.attributeName === 'data-id') {
               const target = mutation.target as Element;
               if (target.nodeType === 1) {
-                processMessage(target);
+                processMessage(target, mutationIndex++);
               }
             }
           }
