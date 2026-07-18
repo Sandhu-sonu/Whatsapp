@@ -378,18 +378,33 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
         processMessage(el, index);
       });
 
-      // Automatic history load: Scroll up the chat container to load older messages
-      const scrollSelectors = [
-        '[data-testid="conversation-panel-body"]',
-        '.copyable-area',
-        'div[role="application"]'
-      ];
-      let scrollContainer: Element | null = null;
-      for (const selector of scrollSelectors) {
-        const el = document.querySelector(selector);
-        if (el) {
-          scrollContainer = el;
-          break;
+      // Find the scroll container dynamically by locating a message and going up to its scrollable parent,
+      // falling back to known selectors if no messages are rendered yet.
+      let scrollContainer: HTMLElement | null = null;
+      const messageEl = document.querySelector('[data-id]');
+      if (messageEl) {
+        let parent = messageEl.parentElement;
+        while (parent && parent !== document.body) {
+          if (parent.scrollHeight > parent.clientHeight && window.getComputedStyle(parent).overflowY !== 'visible') {
+            scrollContainer = parent;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+      }
+
+      if (!scrollContainer) {
+        const scrollSelectors = [
+          '[data-testid="conversation-panel-body"]',
+          '.copyable-area',
+          'div[role="application"]'
+        ];
+        for (const selector of scrollSelectors) {
+          const el = document.querySelector(selector) as HTMLElement | null;
+          if (el && el.scrollHeight > el.clientHeight) {
+            scrollContainer = el;
+            break;
+          }
         }
       }
 
@@ -408,6 +423,7 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
           console.log(`[Observer] Scrolling up (step ${scrollCount + 1}/${maxScrolls})...`);
           if (scrollContainer) {
             scrollContainer.scrollTop = 0; // Scroll to top to trigger WhatsApp loading history
+            scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
           }
           scrollCount++;
           
