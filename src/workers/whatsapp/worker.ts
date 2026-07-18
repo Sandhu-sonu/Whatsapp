@@ -397,7 +397,7 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
         console.log('[Observer] Scroll container found. Starting automatic history load...');
         
         let scrollCount = 0;
-        const maxScrolls = 40; // Scroll up 40 times to load older messages
+        const maxScrolls = 80; // Scroll up 80 times to load older messages
         
         const performScroll = () => {
           if (scrollCount >= maxScrolls) {
@@ -411,8 +411,13 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
           }
           scrollCount++;
           
-          // Wait 1.5 seconds for WhatsApp Web to fetch and render historical messages
-          setTimeout(performScroll, 1500);
+          // Wait 1.5 seconds for WhatsApp Web to fetch, then scan DOM and scroll again
+          setTimeout(() => {
+            document.querySelectorAll('[data-id]').forEach((el, index) => {
+              processMessage(el, index);
+            });
+            performScroll();
+          }, 1500);
         };
         
         // Start scrolling after a short delay to let the DOM settle
