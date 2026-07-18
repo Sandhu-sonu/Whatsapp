@@ -22,6 +22,8 @@ import { AuditRepository } from '../src/repositories/AuditRepository';
 import { NotificationRepository } from '../src/repositories/NotificationRepository';
 import { parseReport } from '../src/lib/parser/pipeline';
 import { prisma } from '../src/lib/prisma';
+import { DatabaseMigrationService } from '../src/database/DatabaseMigrationService';
+import { DatabaseIntegrityService } from '../src/database/DatabaseIntegrityService';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -534,7 +536,7 @@ ipcMain.handle('db-replay-report', async (_event, reportId: string) => {
   try {
     const report = await prisma.dsdReport.findUnique({
       where: { id: reportId },
-      include: { message: true, district: true },
+      include: { message: true, district: true, parserEngine: true },
     });
 
     if (!report) {
@@ -561,7 +563,7 @@ ipcMain.handle('db-replay-report', async (_event, reportId: string) => {
         validationStatus: report.validationStatus,
         validationErrors: JSON.parse(report.validationErrors || '[]'),
         confidence: report.confidence,
-        parserVersion: report.parserVersion,
+        parserVersion: report.parserEngine?.version || '2.1.4',
         extraMetrics: JSON.parse(report.metricsJson || '{}'),
       },
       newResult,
@@ -582,7 +584,16 @@ ipcMain.handle('db-apply-replay-correction', async (_event, reportId: string, re
   }
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    // 1. Run database migrations dynamically
+    await DatabaseMigrationService.runMigrations();
+    // 2. Perform startup database integrity checks
+    await DatabaseIntegrityService.checkIntegrity();
+  } catch (error) {
+    logger.error({ error }, 'Startup initialization failed');
+  }
+
   createWindow();
 
   app.on('activate', () => {

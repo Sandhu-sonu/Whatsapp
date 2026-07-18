@@ -42,3 +42,9 @@ function copyFolderRecursiveSync(source, target) {
 
 copyFolderRecursiveSync(srcClient, destClient);
 console.log('Copied src/generated/prisma-client to dist-electron/src/generated/prisma-client');
+
+// Copy migrations folder to dist-electron
+const srcMigrations = './src/database/migrations';
+const destMigrations = './dist-electron/src/database/migrations';
+copyFolderRecursiveSync(srcMigrations, destMigrations);
+console.log('Copied src/database/migrations to dist-electron/src/database/migrations');

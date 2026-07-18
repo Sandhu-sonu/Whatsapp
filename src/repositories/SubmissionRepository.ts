@@ -240,6 +240,9 @@ export class SubmissionRepository {
           });
         }
 
+        // Lookup or create parser engine reference
+        const parserEngineId = await this.getOrCreateParserEngine(tx);
+
         // 4. Create the new DsdReport revision
         const newReport = await tx.dsdReport.create({
           data: {
@@ -259,6 +262,9 @@ export class SubmissionRepository {
             isLatest: true,
             revisionNumber,
             parserMode,
+            parserEngineId,
+            rawExtractedJson: result.rawExtractedJson,
+            processingDurationMs: result.processingDurationMs,
             metricsJson: JSON.stringify(extraMetrics || {}),
           },
         });
@@ -380,6 +386,9 @@ export class SubmissionRepository {
           });
         }
 
+        // Lookup or create parser engine reference
+        const parserEngineId = await this.getOrCreateParserEngine(tx);
+
         // Create new manually corrected report revision
         const newReport = await tx.dsdReport.create({
           data: {
@@ -399,6 +408,7 @@ export class SubmissionRepository {
             isLatest: true,
             revisionNumber: submission.reports.length,
             parserMode: 'MANUAL',
+            parserEngineId,
             metricsJson: '{}',
           },
         });
@@ -471,6 +481,8 @@ export class SubmissionRepository {
       confidence: number;
       parserMode: string;
       extraMetrics: any;
+      rawExtractedJson?: string;
+      processingDurationMs?: number;
     },
     userName: string = 'Operator'
   ) {
@@ -543,6 +555,9 @@ export class SubmissionRepository {
           });
         }
 
+        // Lookup or create parser engine reference
+        const parserEngineId = await this.getOrCreateParserEngine(tx);
+
         // Create new DsdReport
         const newReport = await tx.dsdReport.create({
           data: {
@@ -562,6 +577,9 @@ export class SubmissionRepository {
             isLatest: true,
             revisionNumber,
             parserMode,
+            parserEngineId,
+            rawExtractedJson: result.rawExtractedJson,
+            processingDurationMs: result.processingDurationMs,
             metricsJson: JSON.stringify(extraMetrics || {}),
           },
         });
@@ -810,6 +828,31 @@ export class SubmissionRepository {
       }));
     } catch (error: any) {
       throw new DatabaseError('Failed to query submission timeline.', error);
+    }
+  }
+
+  private static async getOrCreateParserEngine(tx: any): Promise<string | null> {
+    try {
+      const engine = await tx.parserEngine.findFirst({
+        where: {
+          name: 'RegexParser',
+          version: '2.1.4',
+          build: '2026.07.18'
+        }
+      });
+      if (engine) return engine.id;
+      
+      const newEngine = await tx.parserEngine.create({
+        data: {
+          name: 'RegexParser',
+          version: '2.1.4',
+          build: '2026.07.18'
+        }
+      });
+      return newEngine.id;
+    } catch (error) {
+      logger.warn({ error }, 'SubmissionRepository: Failed to get/create ParserEngine');
+      return null;
     }
   }
 }

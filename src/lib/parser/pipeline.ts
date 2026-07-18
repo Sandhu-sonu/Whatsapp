@@ -23,6 +23,8 @@ export interface ParserResult {
   confidence: number;
   parserMode: 'TEMPLATE' | 'REGEX' | 'KEYWORD' | 'MANUAL';
   extraMetrics: Record<string, any>;
+  processingDurationMs?: number;
+  rawExtractedJson?: string;
 }
 
 // Helper to parse date parts
@@ -163,6 +165,7 @@ function extractMetricCandidate(lines: string[], keywords: RegExp, metricKey: st
 }
 
 export async function parseReport(messageText: string, messageReceivedAt: Date): Promise<ParserResult> {
+  const startTime = Date.now();
   const trace: Record<string, string> = {};
 
   // 1. NORMALIZE TEXT & LINES
@@ -422,6 +425,8 @@ export async function parseReport(messageText: string, messageReceivedAt: Date):
   }
 
   const parserMode = (appointmentsBooked !== null && served !== null && cancelled !== null && rescheduled !== null) ? 'TEMPLATE' : 'REGEX';
+  const processingDurationMs = Date.now() - startTime;
+  const rawExtractedJson = JSON.stringify(trace);
 
   return {
     districtId: districtMatch.id,
@@ -443,5 +448,7 @@ export async function parseReport(messageText: string, messageReceivedAt: Date):
       trace,
       remainingText
     },
+    processingDurationMs,
+    rawExtractedJson,
   };
 }
