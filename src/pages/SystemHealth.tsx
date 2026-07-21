@@ -102,8 +102,8 @@ export default function SystemHealthPage() {
           pendingDistricts: summary.pendingCount,
           manualQueue: res.queueLength,
           duplicateReports: 0, // Mocked pending db counter
-          successRate: summary.submittedCount > 0 
-            ? Math.round(((summary.submittedCount - res.queueLength) / summary.submittedCount) * 100) 
+          successRate: res.reportCount && res.reportCount > 0 
+            ? Math.round(((res.reportCount - res.queueLength) / res.reportCount) * 100) 
             : 100,
           whatsappConnected: workerStatus.workerState === 'Running' || workerStatus.workerState === 'Syncing',
           lastHeartbeat: workerStatus.lastSync ? new Date(workerStatus.lastSync).toLocaleTimeString() : 'Never'

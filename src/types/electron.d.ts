@@ -233,6 +233,11 @@ export interface AppApi {
     dbSize: number;
     queueLength: number;
     uptime: number;
+    messageCount?: number;
+    reportCount?: number;
+    submissionCount?: number;
+    snapshotCount?: number;
+    lastBackupTime?: string;
     error?: string;
   }>;
 
