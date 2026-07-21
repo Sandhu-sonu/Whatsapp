@@ -41,6 +41,7 @@ export default function ManualReviewPage() {
   const [error, setError] = useState('');
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [filter, setFilter] = useState<'ALL' | 'INVALID' | 'WARNING'>('ALL');
 
   // Edit fields
   const [booked, setBooked] = useState(0);
@@ -65,8 +66,11 @@ export default function ManualReviewPage() {
       .getManualReviewReports()
       .then((data) => {
         setReports(data);
-        if (data.length > 0) {
-          selectReport(data[0]);
+        // Find matching item under current filter closure value
+        const activeFilter = filter;
+        const filtered = data.filter(r => activeFilter === 'ALL' || r.validationStatus === activeFilter);
+        if (filtered.length > 0) {
+          selectReport(filtered[0]);
         } else {
           setSelectedReport(null);
         }
@@ -77,6 +81,16 @@ export default function ManualReviewPage() {
         setError('Database Error: Failed to retrieve manual review queue.');
         setLoading(false);
       });
+  };
+
+  const handleFilterChange = (newFilter: 'ALL' | 'INVALID' | 'WARNING') => {
+    setFilter(newFilter);
+    const filtered = reports.filter(r => newFilter === 'ALL' || r.validationStatus === newFilter);
+    if (filtered.length > 0) {
+      selectReport(filtered[0]);
+    } else {
+      setSelectedReport(null);
+    }
   };
 
   const selectReport = (report: ManualReviewReport) => {
@@ -154,6 +168,8 @@ export default function ManualReviewPage() {
     }
   };
 
+  const filteredReports = reports.filter(r => filter === 'ALL' || r.validationStatus === filter);
+
   return (
     <div className="p-6 space-y-6 flex flex-col h-full bg-slate-50 text-slate-800">
       <div>
@@ -184,7 +200,7 @@ export default function ManualReviewPage() {
           {/* Left Column: Report List */}
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden flex flex-col shadow-sm">
             <div className="p-3 bg-slate-100 border-b border-slate-200 flex justify-between items-center">
-              <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">Failed Submissions ({reports.length})</span>
+              <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider">Review Items ({filteredReports.length})</span>
               <button 
                 onClick={loadManualReviewReports}
                 className="hover:bg-slate-200 p-1.5 rounded text-slate-600 transition"
@@ -192,9 +208,31 @@ export default function ManualReviewPage() {
                 <RefreshCw size={12} />
               </button>
             </div>
+
+            {/* Filter Tabs */}
+            <div className="flex border-b border-slate-200 bg-slate-50/50 p-1.5 gap-1">
+              {(['ALL', 'INVALID', 'WARNING'] as const).map(f => {
+                const count = f === 'ALL' 
+                  ? reports.length 
+                  : reports.filter(r => r.validationStatus === f).length;
+                return (
+                  <button
+                    key={f}
+                    onClick={() => handleFilterChange(f)}
+                    className={`flex-1 text-[10px] font-bold py-1 px-2 rounded-md transition ${
+                      filter === f
+                        ? 'bg-slate-800 text-white shadow-sm'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-105'
+                    }`}
+                  >
+                    {f} ({count})
+                  </button>
+                );
+              })}
+            </div>
             
             <div className="divide-y divide-slate-200 overflow-y-auto flex-1 max-h-[600px]">
-              {reports.map((r) => (
+              {filteredReports.map((r) => (
                 <button
                   key={r.id}
                   onClick={() => selectReport(r)}
@@ -207,7 +245,10 @@ export default function ManualReviewPage() {
                     <div className="text-[10px] text-slate-500 font-mono mt-0.5">
                       Date: {formatReportDate(r.submission.reportDate)}
                     </div>
-                    <div className="text-[9px] text-rose-600 font-semibold mt-1 truncate">
+                    <div className={`text-[9px] font-semibold mt-1 truncate ${
+                      r.validationStatus === 'INVALID' ? 'text-rose-600' : 'text-amber-600'
+                    }`}>
+                      {r.validationStatus === 'INVALID' ? '❌ ' : '⚠️ '}
                       {parseErrors(r.validationErrors)[0] || 'Verification failed'}
                     </div>
                   </div>

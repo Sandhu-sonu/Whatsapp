@@ -44,6 +44,27 @@ export default function AnalyticsPage() {
   });
   const [errorTrends, setErrorTrends] = useState<Array<{ type: string; count: number; lastDate: string; example: string }>>([]);
 
+  const getHourlyTimelineStats = () => {
+    const hours = Array.from({ length: 24 }, (_, i) => i);
+    const counts = Array(24).fill(0);
+    
+    for (const r of timelineData) {
+      if (r.receivedAt) {
+        const hour = new Date(r.receivedAt).getHours();
+        if (hour >= 0 && hour < 24) {
+          counts[hour]++;
+        }
+      }
+    }
+    return hours.map(h => ({
+      hour: `${String(h).padStart(2, '0')}:00`,
+      count: counts[h]
+    })).filter(h => h.count > 0 || (parseInt(h.hour) >= 8 && parseInt(h.hour) <= 20));
+  };
+
+  const hourlyData = getHourlyTimelineStats();
+  const maxCount = Math.max(...hourlyData.map(h => h.count), 1);
+
   const getYesterdayLocalDateString = () => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
@@ -336,6 +357,24 @@ export default function AnalyticsPage() {
     }
   };
 
+  // Performance tab aggregates calculations
+  const totalServed = performanceData.reduce((acc, row) => acc + (row.served || 0), 0);
+  const totalRescheduled = performanceData.reduce((acc, row) => acc + (row.rescheduled || 0), 0);
+  const rescheduleToServedRatio = totalServed > 0 ? (totalRescheduled / totalServed) * 100 : 0;
+  const deliveryIndex = (totalServed + totalRescheduled) > 0 ? (totalServed / (totalServed + totalRescheduled)) * 100 : 0;
+
+  // Reschedule Hotspots (Highest Rescheduled count)
+  const rescheduleHotspots = [...performanceData]
+    .filter(row => row.booked > 0)
+    .sort((a, b) => (b.rescheduled || 0) - (a.rescheduled || 0))
+    .slice(0, 3);
+
+  // High reschedule rate hotspots
+  const rescheduleRateHotspots = [...performanceData]
+    .filter(row => row.booked > 0)
+    .sort((a, b) => (b.rescheduleRate || 0) - (a.rescheduleRate || 0))
+    .slice(0, 3);
+
   return (
     <div className="p-6 space-y-6 flex flex-col h-full bg-slate-50 text-slate-800">
       <div>
@@ -530,32 +569,174 @@ export default function AnalyticsPage() {
               performanceData.length === 0 ? (
                 <div className="p-12 text-center text-xs text-slate-400 italic">No reports found in selected range.</div>
               ) : (
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200 sticky top-0 z-10 uppercase tracking-wider text-[10px]">
-                      <th className="py-3 px-4">Rank</th>
-                      <th className="py-3 px-4">District</th>
-                      <th className="py-3 px-4 text-right">Booked</th>
-                      <th className="py-3 px-4 text-right">Served</th>
-                      <th className="py-3 px-4 text-right">Cancelled</th>
-                      <th className="py-3 px-4 text-right">Rescheduled</th>
-                      <th className="py-3 px-4 text-right">Service Rate</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {performanceData.map((row, index) => (
-                      <tr key={index} className="odd:bg-white even:bg-slate-50/50 hover:bg-slate-50 text-slate-755 transition duration-150">
-                        <td className="py-3.5 px-4 font-mono font-bold text-slate-450">#{index + 1}</td>
-                        <td className="py-3.5 px-4 font-bold text-slate-850">{row.districtName}</td>
-                        <td className="py-3.5 px-4 text-right font-mono font-semibold">{row.booked}</td>
-                        <td className="py-3.5 px-4 text-right font-mono text-emerald-700 font-semibold">{row.served}</td>
-                        <td className="py-3.5 px-4 text-right font-mono text-rose-700 font-semibold">{row.cancelled}</td>
-                        <td className="py-3.5 px-4 text-right font-mono text-amber-600 font-semibold">{row.rescheduled}</td>
-                        <td className="py-3.5 px-4 text-right font-mono font-extrabold text-blue-700">{row.serviceRate.toFixed(1)}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="p-5 space-y-6">
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                      <div>
+                        <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Total Served Appointments</div>
+                        <div className="text-xl font-bold text-slate-800 mt-1 font-mono">{totalServed}</div>
+                      </div>
+                      <div className="text-[10px] text-emerald-600 font-semibold mt-2">Successful service delivery</div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                      <div>
+                        <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Total Rescheduled Appointments</div>
+                        <div className="text-xl font-bold text-slate-800 mt-1 font-mono">{totalRescheduled}</div>
+                      </div>
+                      <div className="text-[10px] text-amber-600 font-semibold mt-2">Delayed/postponed volume</div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                      <div>
+                        <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Reschedule to Served Ratio</div>
+                        <div className="text-xl font-bold text-slate-800 mt-1 font-mono">{rescheduleToServedRatio.toFixed(1)}%</div>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-medium mt-2">Reschedules per 100 served</div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                      <div>
+                        <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Delivery vs Delay Index</div>
+                        <div className="text-xl font-bold text-slate-800 mt-1 font-mono">{deliveryIndex.toFixed(1)}%</div>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-medium mt-2">Served / (Served + Rescheduled)</div>
+                    </div>
+                  </div>
+
+                  {/* Proportional Analysis Stacked Bars */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm">
+                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-4">Served vs Rescheduled Performance Matrix</h3>
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                      {performanceData.map((row, index) => {
+                        const servedPct = row.booked > 0 ? (row.served / row.booked) * 100 : 0;
+                        const reschedPct = row.booked > 0 ? (row.rescheduled / row.booked) * 100 : 0;
+                        const cancelPct = row.booked > 0 ? (row.cancelled / row.booked) * 100 : 0;
+                        const pendingPct = Math.max(0, 100 - servedPct - reschedPct - cancelPct);
+
+                        return (
+                          <div key={index} className="flex items-center text-[10px] font-sans">
+                            <div className="w-32 font-bold text-slate-700 truncate pr-2">{row.districtName}</div>
+                            <div className="flex-1 flex h-4 bg-slate-200 rounded overflow-hidden shadow-inner">
+                              {row.served > 0 && (
+                                <div 
+                                  style={{ width: `${servedPct}%` }} 
+                                  className="bg-emerald-500 text-[8px] text-white flex items-center justify-center font-bold font-mono transition-all"
+                                  title={`Served: ${row.served} (${servedPct.toFixed(1)}%)`}
+                                >
+                                  {servedPct > 15 ? `${servedPct.toFixed(0)}%` : ''}
+                                </div>
+                              )}
+                              {row.rescheduled > 0 && (
+                                <div 
+                                  style={{ width: `${reschedPct}%` }} 
+                                  className="bg-amber-500 text-[8px] text-white flex items-center justify-center font-bold font-mono transition-all"
+                                  title={`Rescheduled: ${row.rescheduled} (${reschedPct.toFixed(1)}%)`}
+                                >
+                                  {reschedPct > 15 ? `${reschedPct.toFixed(0)}%` : ''}
+                                </div>
+                              )}
+                              {row.cancelled > 0 && (
+                                <div 
+                                  style={{ width: `${cancelPct}%` }} 
+                                  className="bg-rose-500 text-[8px] text-white flex items-center justify-center font-bold font-mono transition-all"
+                                  title={`Cancelled: ${row.cancelled} (${cancelPct.toFixed(1)}%)`}
+                                >
+                                  {cancelPct > 15 ? `${cancelPct.toFixed(0)}%` : ''}
+                                </div>
+                              )}
+                              {pendingPct > 0 && (
+                                <div 
+                                  style={{ width: `${pendingPct}%` }} 
+                                  className="bg-slate-200/50"
+                                  title={`Pending/Unaccounted: ${pendingPct.toFixed(1)}%`}
+                                />
+                              )}
+                            </div>
+                            <div className="w-28 text-right font-mono font-semibold text-slate-500 pl-2 whitespace-nowrap">
+                              S: {row.served} | R: {row.rescheduled}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    
+                    {/* Legend */}
+                    <div className="flex justify-end space-x-4 mt-4 text-[9px] text-slate-500 font-bold uppercase">
+                      <div className="flex items-center space-x-1">
+                        <span className="w-2.5 h-2.5 bg-emerald-500 rounded-sm"></span>
+                        <span>Served</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <span className="w-2.5 h-2.5 bg-amber-500 rounded-sm"></span>
+                        <span>Rescheduled</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <span className="w-2.5 h-2.5 bg-rose-500 rounded-sm"></span>
+                        <span>Cancelled</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Operational Insights Panels */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="border border-slate-200 rounded-xl p-4 bg-red-50/20">
+                      <h4 className="text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-2">⚠️ Reschedule Hotspots (Highest Volume)</h4>
+                      <div className="divide-y divide-slate-200">
+                        {rescheduleHotspots.map((h, i) => (
+                          <div key={i} className="py-2 flex justify-between items-center text-xs">
+                            <span className="font-bold text-slate-800">{h.districtName}</span>
+                            <span className="font-mono font-bold text-amber-600">{h.rescheduled} Rescheduled ({h.rescheduleRate.toFixed(1)}% of booked)</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl p-4 bg-blue-50/20">
+                      <h4 className="text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-2">📊 High Reschedule Rates (% of Booked)</h4>
+                      <div className="divide-y divide-slate-200">
+                        {rescheduleRateHotspots.map((h, i) => (
+                          <div key={i} className="py-2 flex justify-between items-center text-xs">
+                            <span className="font-bold text-slate-800">{h.districtName}</span>
+                            <span className="font-mono font-bold text-blue-700">{h.rescheduleRate.toFixed(1)}% rate ({h.rescheduled} reschedules)</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Table */}
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">District Performance Summary Table</h3>
+                    <table className="w-full text-left border-collapse text-xs border border-slate-200 rounded-lg overflow-hidden">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200 uppercase tracking-wider text-[9px]">
+                          <th className="py-3 px-4">Rank</th>
+                          <th className="py-3 px-4">District</th>
+                          <th className="py-3 px-4 text-right">Booked</th>
+                          <th className="py-3 px-4 text-right">Served</th>
+                          <th className="py-3 px-4 text-right">Cancelled</th>
+                          <th className="py-3 px-4 text-right">Rescheduled</th>
+                          <th className="py-3 px-4 text-right">Service Rate</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {performanceData.map((row, index) => (
+                          <tr key={index} className="odd:bg-white even:bg-slate-50/50 hover:bg-slate-50 text-slate-755 transition duration-150">
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-450">#{index + 1}</td>
+                            <td className="py-3.5 px-4 font-bold text-slate-850">{row.districtName}</td>
+                            <td className="py-3.5 px-4 text-right font-mono font-semibold">{row.booked}</td>
+                            <td className="py-3.5 px-4 text-right font-mono text-emerald-700 font-semibold">{row.served}</td>
+                            <td className="py-3.5 px-4 text-right font-mono text-rose-700 font-semibold">{row.cancelled}</td>
+                            <td className="py-3.5 px-4 text-right font-mono text-amber-600 font-semibold">{row.rescheduled}</td>
+                            <td className="py-3.5 px-4 text-right font-mono font-extrabold text-blue-700">{row.serviceRate.toFixed(1)}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )
             )}
 
@@ -669,38 +850,94 @@ export default function AnalyticsPage() {
               timelineData.length === 0 ? (
                 <div className="p-12 text-center text-xs text-slate-400 italic">No submissions logs recorded for this date.</div>
               ) : (
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200 sticky top-0 z-10 uppercase tracking-wider text-[10px]">
-                      <th className="py-3 px-4">Sequence</th>
-                      <th className="py-3 px-4">District</th>
-                      <th className="py-3 px-4">Received Time</th>
-                      <th className="py-3 px-4">Parser Mode</th>
-                      <th className="py-3 px-4 text-right">Booked Vol</th>
-                      <th className="py-3 px-4 text-right">Verification</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {timelineData.map((row, index) => (
-                      <tr key={index} className="odd:bg-white even:bg-slate-50/50 hover:bg-slate-50 text-slate-755 transition duration-150">
-                        <td className="py-3.5 px-4 font-mono font-bold text-slate-500">#{index + 1}</td>
-                        <td className="py-3.5 px-4 font-bold text-slate-850">{row.districtName}</td>
-                        <td className="py-3.5 px-4 font-mono text-slate-500">{formatTime(row.receivedAt)}</td>
-                        <td className="py-3.5 px-4 font-mono text-[10px] text-slate-500">{row.parserMode}</td>
-                        <td className="py-3.5 px-4 text-right font-mono font-semibold">{row.booked}</td>
-                        <td className="py-3.5 px-4 text-right">
-                          <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold border ${
-                            row.validationStatus === 'VALID' ? 'bg-emerald-50 text-emerald-700 border-emerald-250' :
-                            row.validationStatus === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-250' :
-                            'bg-rose-50 text-rose-750 border-rose-250'
-                          }`}>
-                            {row.validationStatus}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="space-y-6">
+                  {/* Progress Indicators */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Submission Progress</span>
+                        <div className="text-2xl font-black text-slate-900 mt-1 font-mono">{timelineData.length} / 23 Districts</div>
+                      </div>
+                      <div className="w-32 bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200">
+                        <div 
+                          style={{ width: `${Math.min((timelineData.length / 23) * 100, 100)}%` }}
+                          className="bg-blue-600 h-full rounded-full"
+                        />
+                      </div>
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">First Submission Time</span>
+                      <div className="text-2xl font-extrabold text-emerald-700 mt-1 font-mono">
+                        {timelineData.length > 0 ? formatTime(timelineData[0].receivedAt) : '--:--'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SVG Hourly Bar Chart */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 shadow-inner">
+                    <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-4">Hourly Message Distribution Timeline</h4>
+                    <div className="flex items-end justify-between h-40 pt-6 px-4">
+                      {hourlyData.map((h, i) => {
+                        const pct = (h.count / maxCount) * 100;
+                        return (
+                          <div key={i} className="flex flex-col items-center flex-1 group relative">
+                            {/* Hover tooltip */}
+                            <div className="absolute bottom-full mb-2 bg-slate-800 text-white text-[9px] font-bold px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition shadow pointer-events-none z-10">
+                              {h.count} reports
+                            </div>
+                            
+                            {/* Bar */}
+                            <div 
+                              style={{ height: `${Math.max(pct, 4)}%` }}
+                              className={`w-4 sm:w-6 rounded-t transition-all ${
+                                h.count > 0 ? 'bg-blue-600 group-hover:bg-blue-500' : 'bg-slate-200'
+                              }`}
+                            />
+                            
+                            {/* Label */}
+                            <span className="text-[8px] font-mono text-slate-500 mt-2">{h.hour}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Sequencing Table */}
+                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200 sticky top-0 z-10 uppercase tracking-wider text-[10px]">
+                          <th className="py-3 px-4">Sequence</th>
+                          <th className="py-3 px-4">District</th>
+                          <th className="py-3 px-4">Received Time</th>
+                          <th className="py-3 px-4">Parser Mode</th>
+                          <th className="py-3 px-4 text-right">Booked Vol</th>
+                          <th className="py-3 px-4 text-right">Verification</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {timelineData.map((row, index) => (
+                          <tr key={index} className="odd:bg-white even:bg-slate-50/50 hover:bg-slate-50 text-slate-755 transition duration-150">
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-500">#{index + 1}</td>
+                            <td className="py-3.5 px-4 font-bold text-slate-850">{row.districtName}</td>
+                            <td className="py-3.5 px-4 font-mono text-slate-550">{formatTime(row.receivedAt)}</td>
+                            <td className="py-3.5 px-4 font-mono text-[10px] text-slate-550">{row.parserMode}</td>
+                            <td className="py-3.5 px-4 text-right font-mono font-semibold">{row.booked}</td>
+                            <td className="py-3.5 px-4 text-right">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold border ${
+                                row.validationStatus === 'VALID' ? 'bg-emerald-50 text-emerald-700 border-emerald-250' :
+                                row.validationStatus === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-250' :
+                                'bg-rose-50 text-rose-750 border-rose-250'
+                              }`}>
+                                {row.validationStatus}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )
             )}
 

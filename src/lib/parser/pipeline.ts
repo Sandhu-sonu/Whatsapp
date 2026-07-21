@@ -74,6 +74,16 @@ function tryParseDateStr(str: string, receivedAt: Date, trace: Record<string, st
     }
   }
 
+  // Pattern 1b: DDMM-YYYY or DDMMYYYY (allow compressed day-month blocks e.g. 1707-2026 or 17072026)
+  const matchCompressed = s.match(/\b(\d{2})(\d{2})[\/\.\-]?(\d{4})\b/);
+  if (matchCompressed) {
+    const d = parseDateParts(matchCompressed[1], matchCompressed[2], matchCompressed[3], receivedAt);
+    if (d) {
+      trace.datePattern = `parsed compressed date pattern (DDMM-YYYY): "${matchCompressed[0]}"`;
+      return d;
+    }
+  }
+
   // Pattern 2: DD-MM-YY (2-digit year)
   const match2 = s.match(/(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2})\b/);
   if (match2) {

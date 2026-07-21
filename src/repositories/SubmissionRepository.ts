@@ -83,7 +83,7 @@ export class SubmissionRepository {
       const submittedCount = uniqueSubmittedDistricts.size;
       const pendingCount = Math.max(0, totalDistricts - submittedCount);
 
-      // 3. Query all latest valid/warning reports in range (excluding 1970-01-01)
+      // 3. Query all latest valid/warning reports in range (excluding 1970-01-01) for stats totals
       const reports = await prisma.dsdReport.findMany({
         where: {
           reportDate: {
@@ -113,6 +113,34 @@ export class SubmissionRepository {
       const cancellationRate = appointmentsBooked > 0 ? (cancelled / appointmentsBooked) * 100 : 0;
       const rescheduleRate = appointmentsBooked > 0 ? (rescheduled / appointmentsBooked) * 100 : 0;
 
+      // 4. Query all latest reports in range for validation count breakouts
+      const allLatestReports = await prisma.dsdReport.findMany({
+        where: {
+          reportDate: {
+            gte: fromDate,
+            lte: toDate,
+            not: new Date('1970-01-01T00:00:00Z')
+          },
+          isLatest: true,
+          district: { isActive: true },
+        },
+        select: { validationStatus: true }
+      });
+
+      let validCount = 0;
+      let warningCount = 0;
+      let invalidCount = 0;
+      let manualReviewCount = 0;
+
+      for (const r of allLatestReports) {
+        if (r.validationStatus === 'VALID') validCount++;
+        else if (r.validationStatus === 'WARNING') warningCount++;
+        else if (r.validationStatus === 'INVALID') {
+          invalidCount++;
+          manualReviewCount++;
+        }
+      }
+
       return {
         totalDistricts,
         submittedCount,
@@ -124,6 +152,10 @@ export class SubmissionRepository {
         serviceRate,
         cancellationRate,
         rescheduleRate,
+        validCount,
+        warningCount,
+        invalidCount,
+        manualReviewCount,
       };
     } catch (error: any) {
       logger.error({ error }, 'SubmissionRepository: Failed to compile summary range');
@@ -269,15 +301,12 @@ export class SubmissionRepository {
           },
         });
 
-        // 5. Update DailySubmission summary status
-        const isAccepted = validationStatus === 'VALID' || validationStatus === 'WARNING';
-        const newStatus = isAccepted ? 'SUBMITTED' : 'PENDING';
-
+        // 5. Update DailySubmission summary status (marked as submitted for all validation statuses)
         await tx.dailySubmission.update({
           where: { id: submission.id },
           data: {
-            status: newStatus,
-            submittedAt: isAccepted ? new Date() : null,
+            status: 'SUBMITTED',
+            submittedAt: new Date(),
           },
         });
 
@@ -302,7 +331,7 @@ export class SubmissionRepository {
     try {
       return await prisma.dsdReport.findMany({
         where: {
-          validationStatus: 'INVALID',
+          validationStatus: { in: ['INVALID', 'WARNING'] },
           isLatest: true,
         },
         include: {
@@ -585,14 +614,11 @@ export class SubmissionRepository {
         });
 
         // Update DailySubmission summary status
-        const isAccepted = validationStatus === 'VALID' || validationStatus === 'WARNING';
-        const newStatus = isAccepted ? 'SUBMITTED' : 'PENDING';
-
         await tx.dailySubmission.update({
           where: { id: submission.id },
           data: {
-            status: newStatus,
-            submittedAt: isAccepted ? new Date() : null,
+            status: 'SUBMITTED',
+            submittedAt: new Date(),
           },
         });
 
@@ -828,6 +854,145 @@ export class SubmissionRepository {
       }));
     } catch (error: any) {
       throw new DatabaseError('Failed to query submission timeline.', error);
+    }
+  }
+
+  static async compileDailyAuditSnapshot(dateInput: string | Date): Promise<any> {
+    const reportDate = this.getNormalizedDate(dateInput);
+    if (!reportDate) {
+      throw new Error('Explicit date argument reportDate is required.');
+    }
+
+    try {
+      const expectedDistricts = await prisma.district.count({ where: { isActive: true } });
+      const districts = await prisma.district.findMany({ where: { isActive: true } });
+
+      const submissions = await prisma.dailySubmission.findMany({
+        where: { reportDate },
+        include: {
+          reports: {
+            where: { isLatest: true }
+          }
+        }
+      });
+
+      const reports = await prisma.dsdReport.findMany({
+        where: { reportDate, isLatest: true },
+        include: { district: true }
+      });
+
+      const submittedCount = submissions.filter(s => s.status === 'SUBMITTED').length;
+      const pendingCount = Math.max(0, expectedDistricts - submittedCount);
+
+      let validCount = 0;
+      let warningCount = 0;
+      let invalidCount = 0;
+      let confidenceSum = 0;
+
+      let firstSubmissionTime: Date | null = null;
+      let lastSubmissionTime: Date | null = null;
+
+      for (const r of reports) {
+        if (r.validationStatus === 'VALID') validCount++;
+        else if (r.validationStatus === 'WARNING') warningCount++;
+        else if (r.validationStatus === 'INVALID') invalidCount++;
+
+        confidenceSum += r.confidence;
+
+        if (!firstSubmissionTime || r.receivedAt < firstSubmissionTime) {
+          firstSubmissionTime = r.receivedAt;
+        }
+        if (!lastSubmissionTime || r.receivedAt > lastSubmissionTime) {
+          lastSubmissionTime = r.receivedAt;
+        }
+      }
+
+      // Count messages parsed/ignored
+      const duplicateCount = await prisma.whatsAppMessage.count({
+        where: {
+          receivedAt: {
+            gte: reportDate,
+            lt: new Date(reportDate.getTime() + 24 * 60 * 60 * 1000)
+          },
+          ingestionStatus: 'IGNORED'
+        }
+      });
+
+      const manualReviewCount = reports.filter(r => r.validationStatus === 'INVALID').length;
+      
+      const completionPercentage = expectedDistricts > 0 ? (submittedCount / expectedDistricts) * 100 : 0;
+      const averageConfidence = reports.length > 0 ? confidenceSum / reports.length : 0;
+      const parserSuccessRate = reports.length > 0 ? ((validCount + warningCount) / reports.length) * 100 : 0;
+
+      const districtSnapshotDetails = districts.map(d => {
+        const sub = submissions.find(s => s.districtId === d.id);
+        const rep = reports.find(r => r.districtId === d.id);
+        return {
+          districtId: d.id,
+          districtName: d.name,
+          submitted: sub ? sub.status === 'SUBMITTED' : false,
+          validationStatus: rep ? rep.validationStatus : 'PENDING',
+          receivedAt: rep ? rep.receivedAt : null,
+          confidence: rep ? rep.confidence : null,
+          revision: rep ? rep.revisionNumber : 0
+        };
+      });
+
+      const snapshotDataJson = JSON.stringify(districtSnapshotDetails);
+
+      // Create snapshot record in SQLite (upsert to prevent duplicate conflicts if run twice)
+      const existingSnapshot = await prisma.dailyAuditSnapshot.findFirst({
+        where: { reportDate }
+      });
+
+      if (existingSnapshot) {
+        return await prisma.dailyAuditSnapshot.update({
+          where: { id: existingSnapshot.id },
+          data: {
+            expectedDistricts,
+            submittedCount,
+            pendingCount,
+            validCount,
+            warningCount,
+            invalidCount,
+            manualReviewCount,
+            duplicateCount,
+            firstSubmissionTime,
+            lastSubmissionTime,
+            completionPercentage,
+            averageConfidence,
+            parserSuccessRate,
+            workerVersion: '1.0.0',
+            parserVersion: '2.1.4',
+            snapshotDataJson
+          }
+        });
+      }
+
+      return await prisma.dailyAuditSnapshot.create({
+        data: {
+          reportDate,
+          expectedDistricts,
+          submittedCount,
+          pendingCount,
+          validCount,
+          warningCount,
+          invalidCount,
+          manualReviewCount,
+          duplicateCount,
+          firstSubmissionTime,
+          lastSubmissionTime,
+          completionPercentage,
+          averageConfidence,
+          parserSuccessRate,
+          workerVersion: '1.0.0',
+          parserVersion: '2.1.4',
+          snapshotDataJson
+        }
+      });
+    } catch (error: any) {
+      logger.error({ error, reportDate }, 'SubmissionRepository: Failed to compile daily audit snapshot');
+      throw new DatabaseError('Failed to compile daily audit snapshot.', error);
     }
   }
 

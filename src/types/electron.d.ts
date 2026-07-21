@@ -163,6 +163,7 @@ export interface AppApi {
     reportDate?: string;
   }) => Promise<any>;
   exportData: (filename: string, format: 'csv' | 'excel' | 'pdf', headers: string[], rows: any[][]) => Promise<boolean>;
+  exportPmuReport: (fromDate: string, toDate: string) => Promise<boolean>;
   
   // Worker Controls
   startWorker: (groupName: string, headless: boolean) => Promise<boolean>;

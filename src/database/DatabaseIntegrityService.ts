@@ -61,6 +61,23 @@ export class DatabaseIntegrityService {
         errors.push(`Integrity Violation: Sum of outcomes exceeds booked appointments for report ID(s): ${mathMismatches.map(m => `${m.id} (booked:${m.booked} vs sum:${m.actualSum})`).join(', ')}`);
       }
 
+      // 7. Relational Count Reconciliation:
+      // A. Every DsdReport linked to a message references an existing message in WhatsAppMessage (supports 1-to-many consolidated messages)
+      const orphanMessageReports = await prisma.$queryRawUnsafe<{ id: string }[]>(
+        "SELECT id FROM DsdReport WHERE messageId IS NOT NULL AND messageId NOT IN (SELECT id FROM WhatsAppMessage);"
+      );
+      if (orphanMessageReports.length > 0) {
+        errors.push(`Reconciliation Mismatch: DsdReport records reference message IDs that are missing in WhatsAppMessage table: ${orphanMessageReports.map(r => r.id).join(', ')}`);
+      }
+
+      // B. Every latest DsdReport is linked to a DailySubmission marked as 'SUBMITTED'
+      const unsubmittedLatest = await prisma.$queryRawUnsafe<{ id: string }[]>(
+        "SELECT r.id FROM DsdReport r JOIN DailySubmission s ON r.submissionId = s.id WHERE r.isLatest = 1 AND s.status != 'SUBMITTED';"
+      );
+      if (unsubmittedLatest.length > 0) {
+        errors.push(`Reconciliation Mismatch: Latest reports found referencing parent submissions not marked as 'SUBMITTED': ${unsubmittedLatest.map(r => r.id).join(', ')}`);
+      }
+
       const passed = errors.length === 0;
 
       if (!passed) {

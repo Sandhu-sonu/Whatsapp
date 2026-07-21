@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRole } from '../contexts/RoleContext';
 import { 
   Activity, 
@@ -23,6 +23,7 @@ interface BackupItem {
 interface ActivityEvent {
   id: string;
   time: string;
+  timestamp: number;
   message: string;
   type: 'OPERATIONAL' | 'PARSER' | 'SYSTEM' | 'AUDIT';
   status: 'VALID' | 'WARNING' | 'ERROR' | 'INFO';
@@ -34,10 +35,16 @@ interface SystemResources {
   dbSize: number;
   queueLength: number;
   uptime: number;
+  messageCount?: number;
+  reportCount?: number;
+  submissionCount?: number;
+  snapshotCount?: number;
+  lastBackupTime?: string;
 }
 
 export default function SystemHealthPage() {
   const { isDeveloper, isAdmin } = useRole();
+  const listRef = useRef<HTMLDivElement>(null);
 
   // States
   const [resources, setResources] = useState<SystemResources | null>(null);
@@ -131,6 +138,7 @@ export default function SystemHealthPage() {
         events.push({
           id: 'audit-' + log.id,
           time: new Date(log.timestamp).toLocaleTimeString(),
+          timestamp: new Date(log.timestamp).getTime(),
           message: `${log.userName} triggered ${log.action.replace(/_/g, ' ')} on ${log.entity}`,
           type: 'AUDIT',
           status: 'INFO'
@@ -145,14 +153,15 @@ export default function SystemHealthPage() {
         events.push({
           id: 'notif-' + n.id,
           time: new Date(n.createdAt).toLocaleTimeString(),
+          timestamp: new Date(n.createdAt).getTime(),
           message: `${n.title}: ${n.message}`,
           type,
           status: n.type as any
         });
       });
 
-      // Sort by time
-      events.sort((a, b) => b.id.localeCompare(a.id));
+      // Sort by timestamp descending (newest first)
+      events.sort((a, b) => b.timestamp - a.timestamp);
       setActiveEvents(events.slice(0, 100));
     } catch (err) {
       console.error('Failed to compile activity logs:', err);
@@ -218,6 +227,12 @@ export default function SystemHealthPage() {
     return e.type === eventFilter;
   });
 
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
+  }, [filteredEvents]);
+
   return (
     <div className="p-6 space-y-6 bg-slate-50 text-slate-800 min-h-full">
       <div className="flex justify-between items-start">
@@ -234,6 +249,19 @@ export default function SystemHealthPage() {
           <span>Refresh</span>
         </button>
       </div>
+
+      {/* Reconciliation Warning Banner */}
+      {activeEvents.some(e => e.message.includes('Reconciliation Mismatch') || e.message.includes('Integrity Violation') || e.message.includes('Reconciliation')) && (
+        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-start space-x-3 text-xs text-amber-900 shadow-sm animate-pulse">
+          <ShieldAlert className="text-amber-600 mt-0.5 flex-shrink-0" size={16} />
+          <div>
+            <h4 className="font-bold uppercase tracking-wider text-[10px]">Database Reconciliation Discrepancy Identified</h4>
+            <p className="mt-1 text-amber-700 font-medium font-sans">
+              Some counts between WhatsApp Messages, Dsd Reports, and Daily Submissions do not match. Review the live activity feed below or system notifications logs for further details.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Operational Health Section (PMU View) */}
       <div className="space-y-4">
@@ -349,22 +377,34 @@ export default function SystemHealthPage() {
             <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
               <div className="flex items-center space-x-2 border-b border-slate-100 pb-3">
                 <Database size={16} className="text-blue-600" />
-                <h3 className="text-xs font-bold text-slate-750 uppercase tracking-wider">SQLite DB Status</h3>
+                <h3 className="text-xs font-bold text-slate-750 uppercase tracking-wider">Current Database</h3>
               </div>
 
               {resources ? (
                 <div className="space-y-3 text-xs font-mono">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">SQLite File Path:</span>
-                    <span className="text-slate-800 font-bold text-[10px] break-all">database/dsd-tracker.db</span>
+                    <span className="text-slate-500">Messages:</span>
+                    <span className="text-slate-800 font-bold">{(resources as any).messageCount || 0}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Database File Size:</span>
-                    <span className="text-slate-800 font-bold">{(resources.dbSize / 1024).toFixed(1)} KB</span>
+                    <span className="text-slate-500">Reports:</span>
+                    <span className="text-slate-800 font-bold">{(resources as any).reportCount || 0}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Manual Review Rows:</span>
-                    <span className="text-slate-800 font-bold">{resources.queueLength} pending</span>
+                    <span className="text-slate-500">Submissions:</span>
+                    <span className="text-slate-800 font-bold">{(resources as any).submissionCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Snapshots:</span>
+                    <span className="text-slate-800 font-bold">{(resources as any).snapshotCount || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">File Size:</span>
+                    <span className="text-slate-800 font-bold">{(resources.dbSize / 1024 / 1024).toFixed(2)} MB</span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-100 pt-2">
+                    <span className="text-slate-500 font-sans font-semibold">Last Backup:</span>
+                    <span className="text-slate-850 font-bold text-[10px]">{(resources as any).lastBackupTime || 'Never'}</span>
                   </div>
                 </div>
               ) : (
@@ -428,7 +468,7 @@ export default function SystemHealthPage() {
           </div>
 
           {/* Activity Events list */}
-          <div className="flex-1 overflow-auto space-y-2.5 pr-2 font-mono text-xs">
+          <div ref={listRef} className="flex-1 overflow-auto space-y-2.5 pr-2 font-mono text-xs">
             {filteredEvents.length > 0 ? (
               filteredEvents.map(e => (
                 <div key={e.id} className="p-2 rounded border border-slate-100 hover:bg-slate-50 transition-colors flex justify-between items-start">

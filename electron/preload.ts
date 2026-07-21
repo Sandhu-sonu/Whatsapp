@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   getManualReviewReports: () => ipcRenderer.invoke('db-get-manual-review'),
   saveManualCorrection: (reportId: string, correction: any) => ipcRenderer.invoke('db-save-manual-correction', reportId, correction),
   exportData: (filename: string, format: 'csv' | 'excel' | 'pdf', headers: string[], rows: any[][]) => ipcRenderer.invoke('db-export-data', filename, format, headers, rows),
+  exportPmuReport: (fromDate: string, toDate: string) => ipcRenderer.invoke('db-export-pmu-report', fromDate, toDate),
   getDistrictHistory: (districtId: string, fromDate: string, toDate: string) => ipcRenderer.invoke('db-get-district-history', districtId, fromDate, toDate),
   getMonthlyReport: (month: number, year: number) => ipcRenderer.invoke('db-get-monthly-report', month, year),
   getLateSubmissions: (fromDate: string, toDate: string) => ipcRenderer.invoke('db-get-late-submissions', fromDate, toDate),

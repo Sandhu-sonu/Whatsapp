@@ -39,6 +39,7 @@ interface SubmissionRow {
     receivedAt?: string;
     metricsJson?: string | null;
     parserVersion?: string | null;
+    parserEngine?: { name: string; version: string; build: string } | null;
   }>;
 }
 
@@ -161,6 +162,16 @@ export default function ReportsPage() {
   };
 
   const handleExport = async (format: 'csv' | 'excel' | 'pdf') => {
+    if (format === 'pdf') {
+      const success = await window.api.exportPmuReport(fromDate, toDate);
+      if (success) {
+        alert('Successfully exported PMU Performance Report PDF.');
+      } else {
+        alert('Export cancelled or failed.');
+      }
+      return;
+    }
+
     const headers = ['District', 'Report Date', 'Submitted', 'Received Time', 'Booked', 'Served', 'Cancelled', 'Rescheduled', 'Service %', 'Status'];
     const rows = sortedSubmissions.map((s) => {
       const hasReport = s.reports.length > 0;
@@ -290,6 +301,12 @@ export default function ReportsPage() {
       } else if (sortField === 'validationStatus') {
         aVal = aRep ? aRep.validationStatus : '';
         bVal = bRep ? bRep.validationStatus : '';
+      } else if (sortField === 'confidence') {
+        aVal = aRep ? aRep.confidence : 0;
+        bVal = bRep ? bRep.confidence : 0;
+      } else if (sortField === 'revisionNumber') {
+        aVal = aRep ? aRep.revisionNumber || 0 : 0;
+        bVal = bRep ? bRep.revisionNumber || 0 : 0;
       }
     }
 
@@ -428,76 +445,141 @@ export default function ReportsPage() {
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200 sticky top-0 z-10 select-none uppercase tracking-wider text-[10px]">
-                  <th onClick={() => handleSort('district.name')} className="py-3 px-4 cursor-pointer hover:text-slate-900">
+                  <th onClick={() => handleSort('district.name')} className="py-3 px-4 cursor-pointer hover:text-slate-900 sticky left-0 bg-slate-100 border-r border-slate-200 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
                     <span className="flex items-center space-x-1"><span>District</span> <ArrowUpDown size={10} /></span>
+                  </th>
+                  <th onClick={() => handleSort('status')} className="py-3 px-4 cursor-pointer hover:text-slate-900">
+                    <span className="flex items-center space-x-1"><span>Status</span> <ArrowUpDown size={10} /></span>
+                  </th>
+                  <th onClick={() => handleSort('validationStatus')} className="py-3 px-4 cursor-pointer hover:text-slate-900">
+                    <span className="flex items-center space-x-1"><span>Validation</span> <ArrowUpDown size={10} /></span>
+                  </th>
+                  <th onClick={() => handleSort('confidence')} className="py-3 px-4 cursor-pointer hover:text-slate-900 text-right">
+                    <span className="flex items-center justify-end space-x-1"><span>Confidence</span> <ArrowUpDown size={10} /></span>
+                  </th>
+                  <th onClick={() => handleSort('revisionNumber')} className="py-3 px-4 cursor-pointer hover:text-slate-900 text-center">
+                    <span className="flex items-center justify-center space-x-1"><span>Revision</span> <ArrowUpDown size={10} /></span>
+                  </th>
+                  <th onClick={() => handleSort('submittedAt')} className="py-3 px-4 cursor-pointer hover:text-slate-900">
+                    <span className="flex items-center space-x-1"><span>Received Time</span> <ArrowUpDown size={10} /></span>
                   </th>
                   <th onClick={() => handleSort('reportDate')} className="py-3 px-4 cursor-pointer hover:text-slate-900">
                     <span className="flex items-center space-x-1"><span>Report Date</span> <ArrowUpDown size={10} /></span>
                   </th>
-                  <th onClick={() => handleSort('status')} className="py-3 px-4 cursor-pointer hover:text-slate-900">
-                    <span className="flex items-center space-x-1"><span>Submitted</span> <ArrowUpDown size={10} /></span>
-                  </th>
-                  <th onClick={() => handleSort('submittedAt')} className="py-3 px-4 cursor-pointer hover:text-slate-900">
-                    <span className="flex items-center space-x-1"><span>Time</span> <ArrowUpDown size={10} /></span>
-                  </th>
-                  <th onClick={() => handleSort('booked')} className="py-3 px-4 cursor-pointer hover:text-slate-900 text-right">
-                    <span className="flex items-center justify-end space-x-1"><span>Booked</span> <ArrowUpDown size={10} /></span>
-                  </th>
-                  <th onClick={() => handleSort('served')} className="py-3 px-4 cursor-pointer hover:text-slate-900 text-right">
-                    <span className="flex items-center justify-end space-x-1"><span>Served</span> <ArrowUpDown size={10} /></span>
-                  </th>
-                  <th onClick={() => handleSort('serviceRate')} className="py-3 px-4 cursor-pointer hover:text-slate-900 text-right">
-                    <span className="flex items-center justify-end space-x-1"><span>Service Rate</span> <ArrowUpDown size={10} /></span>
-                  </th>
-                  <th onClick={() => handleSort('validationStatus')} className="py-3 px-4 cursor-pointer hover:text-slate-900 text-right">
-                    <span className="flex items-center justify-end space-x-1"><span>Status</span> <ArrowUpDown size={10} /></span>
-                  </th>
+                  <th className="py-3 px-4">Parser</th>
+                  <th className="py-3 px-4">Received Source</th>
                   <th className="py-3 px-4 text-center">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
+              <tbody className="divide-y divide-slate-200 bg-white">
                 {sortedSubmissions.map((s) => {
                   const hasReport = s.reports.length > 0;
                   const report = hasReport ? s.reports[0] : null;
-                  const booked = report ? report.appointmentsBooked : 0;
-                  const servicePct = report && booked > 0 ? (report.served / booked) * 100 : 0;
+                  
+                  // Extract parser name and version
+                  let parserInfo = '--';
+                  if (report) {
+                    parserInfo = report.parserMode || 'REGEX';
+                    if (report.parserEngine) {
+                      parserInfo = `${report.parserEngine.name} v${report.parserEngine.version}`;
+                    } else if (report.parserVersion) {
+                      parserInfo = `RegexParser v${report.parserVersion}`;
+                    } else if (report.parserMode === 'MANUAL') {
+                      parserInfo = 'Manual';
+                    } else {
+                      parserInfo = 'RegexParser v2.1.4';
+                    }
+                  }
+
+                  // Extract received source
+                  let receivedSource = '--';
+                  if (report) {
+                    try {
+                      const metrics = report.metricsJson ? JSON.parse(report.metricsJson) : {};
+                      receivedSource = metrics.source || (report.parserMode === 'MANUAL' ? 'Manual Correction' : 'WhatsApp Live');
+                    } catch (e) {
+                      receivedSource = report.parserMode === 'MANUAL' ? 'Manual Correction' : 'WhatsApp Live';
+                    }
+                  }
 
                   return (
-                    <tr key={s.id} className="odd:bg-white even:bg-slate-50/50 hover:bg-slate-50 text-slate-750 transition duration-150">
-                      <td className="py-3.5 px-4 font-bold text-slate-850">{s.district.name}</td>
-                      <td className="py-3.5 px-4 font-mono text-[11px] text-slate-600">{new Date(s.reportDate).toLocaleDateString('en-IN')}</td>
+                    <tr key={s.id} className="bg-white odd:bg-white even:bg-slate-50/50 hover:bg-slate-100 text-slate-750 transition duration-150 group">
+                      {/* District (Frozen) */}
+                      <td className="py-3.5 px-4 font-bold text-slate-850 sticky left-0 bg-inherit border-r border-slate-200 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                        {s.district.name}
+                      </td>
+
+                      {/* Status */}
                       <td className="py-3.5 px-4">
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold border ${
-                          s.status === 'SUBMITTED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'
+                        <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold border uppercase ${
+                          s.status === 'SUBMITTED' ? 'bg-blue-50 text-blue-700 border-blue-150' : 'bg-slate-100 text-slate-500 border-slate-200'
                         }`}>
                           {s.status}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-500">
-                        {s.submittedAt ? new Date(s.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-semibold">{report ? booked : '--'}</td>
-                      <td className="py-3.5 px-4 text-right font-mono text-emerald-700 font-semibold">{report ? report.served : '--'}</td>
-                      <td className="py-3.5 px-4 text-right font-mono font-bold text-blue-700">
-                        {report ? `${servicePct.toFixed(1)}%` : '--'}
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
+
+                      {/* Validation Status Badge */}
+                      <td className="py-3.5 px-4">
                         {report ? (
-                          <span className={`px-2 py-0.5 rounded text-[9px] font-mono font-bold border ${
-                            report.validationStatus === 'VALID' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            report.validationStatus === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                            'bg-rose-50 text-rose-750 border-rose-200'
+                          <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold border uppercase flex items-center w-max space-x-1 ${
+                            report.validationStatus === 'VALID' ? 'bg-emerald-50 text-emerald-700 border-emerald-250' :
+                            report.validationStatus === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-250' :
+                            'bg-rose-50 text-rose-750 border-rose-250'
                           }`}>
-                            {report.validationStatus}
+                            <span>
+                              {report.validationStatus === 'VALID' ? '✅' :
+                               report.validationStatus === 'WARNING' ? '⚠' : '❌'}
+                            </span>
+                            <span>{report.validationStatus}</span>
                           </span>
                         ) : (
                           <span className="text-[10px] text-slate-400 italic">PENDING</span>
                         )}
                       </td>
+
+                      {/* Confidence */}
+                      <td className="py-3.5 px-4 text-right font-mono font-semibold">
+                        {report ? `${report.confidence}%` : '--'}
+                      </td>
+
+                      {/* Revision */}
+                      <td className="py-3.5 px-4 text-center font-mono font-semibold text-slate-655">
+                        {report ? `Rev ${report.revisionNumber || 0}` : '--'}
+                      </td>
+
+                      {/* Received Time */}
+                      <td className="py-3.5 px-4 font-mono text-slate-550">
+                        {report && report.receivedAt ? new Date(report.receivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                      </td>
+
+                      {/* Report Date */}
+                      <td className="py-3.5 px-4 font-mono text-slate-550">
+                        {new Date(s.reportDate).toLocaleDateString('en-IN')}
+                      </td>
+
+                      {/* Parser */}
+                      <td className="py-3.5 px-4 text-slate-600 font-semibold font-mono text-[10px]">
+                        {parserInfo}
+                      </td>
+
+                      {/* Received Source */}
+                      <td className="py-3.5 px-4">
+                        {report ? (
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            receivedSource.includes('Recovery') ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                            receivedSource.includes('Manual') ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                            'bg-blue-50 text-blue-700 border-blue-200'
+                          }`}>
+                            {receivedSource}
+                          </span>
+                        ) : '--'}
+                      </td>
+
+                      {/* Action */}
                       <td className="py-3.5 px-4 text-center">
                         <button
                           onClick={() => openDistrictDetails(s.districtId, s.district.name)}
-                          className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-750 px-3 py-1 rounded text-[10px] font-bold transition shadow-sm"
+                          className="bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 px-3 py-1 rounded text-[10px] font-bold transition shadow-sm"
                         >
                           Details
                         </button>
