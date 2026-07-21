@@ -106,7 +106,11 @@ export default function SystemHealthPage() {
             ? Math.round(((res.reportCount - res.queueLength) / res.reportCount) * 100) 
             : 100,
           whatsappConnected: workerStatus.workerState === 'Running' || workerStatus.workerState === 'Syncing',
-          lastHeartbeat: workerStatus.lastSync ? new Date(workerStatus.lastSync).toLocaleTimeString() : 'Never'
+          lastHeartbeat: (() => {
+            if (!workerStatus.lastSync) return 'Never';
+            const d = new Date(workerStatus.lastSync);
+            return isNaN(d.getTime()) ? workerStatus.lastSync : d.toLocaleTimeString();
+          })()
         });
       }
     } catch (err) {
