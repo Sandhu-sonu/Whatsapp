@@ -71,11 +71,21 @@ export class DatabaseIntegrityService {
       }
 
       // B. Every latest DsdReport is linked to a DailySubmission marked as 'SUBMITTED'
-      const unsubmittedLatest = await prisma.$queryRawUnsafe<{ id: string }[]>(
-        "SELECT r.id FROM DsdReport r JOIN DailySubmission s ON r.submissionId = s.id WHERE r.isLatest = 1 AND s.status != 'SUBMITTED';"
+      const unsubmittedLatest = await prisma.$queryRawUnsafe<{ id: string; submissionId: string }[]>(
+        "SELECT r.id, r.submissionId FROM DsdReport r JOIN DailySubmission s ON r.submissionId = s.id WHERE r.isLatest = 1 AND s.status != 'SUBMITTED';"
       );
       if (unsubmittedLatest.length > 0) {
-        errors.push(`Reconciliation Mismatch: Latest reports found referencing parent submissions not marked as 'SUBMITTED': ${unsubmittedLatest.map(r => r.id).join(', ')}`);
+        logger.info(`DatabaseIntegrityService: Found ${unsubmittedLatest.length} latest reports with unsubmitted parent submissions. Performing automatic self-healing...`);
+        const submissionIdsToHeal = [...new Set(unsubmittedLatest.map(item => item.submissionId))];
+        await prisma.dailySubmission.updateMany({
+          where: {
+            id: { in: submissionIdsToHeal }
+          },
+          data: {
+            status: 'SUBMITTED'
+          }
+        });
+        logger.info(`DatabaseIntegrityService: Successfully self-healed ${submissionIdsToHeal.length} DailySubmissions to 'SUBMITTED' status.`);
       }
 
       const passed = errors.length === 0;

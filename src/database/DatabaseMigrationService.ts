@@ -3,6 +3,7 @@ import path from 'path';
 import { prisma } from '../lib/prisma';
 import { logger } from '../lib/logger';
 import { DatabaseError } from '../core/errors';
+import { BackupService } from './BackupService';
 
 export class DatabaseMigrationService {
   static async runMigrations(): Promise<number> {
@@ -27,6 +28,10 @@ export class DatabaseMigrationService {
       // 3. Resolve migrations directory path
       let migrationsDir = path.join(__dirname, 'migrations');
       if (!fs.existsSync(migrationsDir)) {
+        // Fallback for dist-electron built layout in packaged app
+        migrationsDir = path.join(__dirname, '../src/database/migrations');
+      }
+      if (!fs.existsSync(migrationsDir)) {
         // Fallback for electron build package layout
         migrationsDir = path.join(process.resourcesPath || '', 'migrations');
       }
@@ -48,6 +53,24 @@ export class DatabaseMigrationService {
           const numB = parseInt(b.split('_')[0], 10);
           return numA - numB;
         });
+
+      let hasPending = false;
+      for (const file of files) {
+        const fileVersion = parseInt(file.split('_')[0], 10);
+        if (!isNaN(fileVersion) && fileVersion > currentVersion) {
+          hasPending = true;
+          break;
+        }
+      }
+
+      if (hasPending) {
+        logger.info('DatabaseMigrationService: Pending migrations found, creating automatic backup...');
+        try {
+          await BackupService.createBackup('before_migration');
+        } catch (backupErr) {
+          logger.warn({ backupErr }, 'DatabaseMigrationService: Backup failed, but continuing with migration anyway...');
+        }
+      }
 
       let appliedCount = 0;
       let latestVersion = currentVersion;
