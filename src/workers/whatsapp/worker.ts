@@ -330,6 +330,7 @@ async function startWorker(
         let senderNumber = '';
         let message = '';
         let messageType = 'TEXT';
+        let receivedAtDate = new Date(Date.now() + timeOffsetMs);
 
         const isFromMe = id.startsWith('true_');
         if (isFromMe) sender = 'You';
@@ -345,6 +346,31 @@ async function startWorker(
           const pre = copyable.getAttribute('data-pre-plain-text') || '';
           const match = pre.match(/\]\s*(.*?):\s*$/);
           if (match && match[1]) sender = match[1].trim();
+
+          // Parse actual message timestamp from data-pre-plain-text
+          // Format e.g., "[10:45 am, 22/07/2026]" or "[10:45, 22/07/2026]"
+          const dateMatch = pre.match(/^\[(\d{1,2}):(\d{2})\s*(am|pm)?,\s*(\d{1,2})[./-](\d{1,2})[./-](\d{4})\]/i);
+          if (dateMatch) {
+            let hour = parseInt(dateMatch[1], 10);
+            const minute = parseInt(dateMatch[2], 10);
+            const ampm = dateMatch[3] ? dateMatch[3].toLowerCase() : null;
+            const day = parseInt(dateMatch[4], 10);
+            const month = parseInt(dateMatch[5], 10) - 1;
+            const year = parseInt(dateMatch[6], 10);
+
+            if (ampm) {
+              if (ampm === 'pm' && hour < 12) {
+                hour += 12;
+              } else if (ampm === 'am' && hour === 12) {
+                hour = 0;
+              }
+            }
+
+            const parsed = new Date(year, month, day, hour, minute, 0);
+            if (!isNaN(parsed.getTime())) {
+              receivedAtDate = new Date(parsed.getTime() + timeOffsetMs);
+            }
+          }
         }
 
         const textEl =
@@ -390,7 +416,7 @@ async function startWorker(
           isFromMe,
           message,
           messageType,
-          receivedAt: new Date(Date.now() + timeOffsetMs).toISOString(),
+          receivedAt: receivedAtDate.toISOString(),
         });
       };
 
@@ -427,16 +453,45 @@ async function startWorker(
 
         const checkStoppingCondition = (): boolean => {
           const messages = document.querySelectorAll('[data-testid="conversation-panel-messages"] [data-id]') || document.querySelectorAll('[data-id]');
-          if (targetId) {
-            for (let i = 0; i < messages.length; i++) {
-              if (messages[i].getAttribute('data-id') === targetId) {
-                console.log(`[Observer] Target message ID ${targetId} is visible. Stopping scroll.`);
-                return true;
+          
+          if (messages.length >= limitCount) {
+            console.log(`[Observer] Total loaded messages (${messages.length}) exceeds limit count (${limitCount}). Stopping scroll.`);
+            return true;
+          }
+
+          let oldestDateOlderThan3Days = false;
+          if (messages.length > 0) {
+            const oldestEl = messages[0];
+            const copyable = oldestEl.querySelector('.copyable-text');
+            if (copyable) {
+              const preText = copyable.getAttribute('data-pre-plain-text') || '';
+              const dateMatch = preText.match(/^\[\d{1,2}:\d{2}(?:\s*[ap]m)?,\s*(\d{1,2})[./-](\d{1,2})[./-](\d{4})\]/i);
+              if (dateMatch) {
+                const day = parseInt(dateMatch[1], 10);
+                const month = parseInt(dateMatch[2], 10) - 1;
+                const year = parseInt(dateMatch[3], 10);
+                const oldestDate = new Date(year, month, day);
+                const threeDaysAgo = new Date();
+                threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+                if (oldestDate < threeDaysAgo) {
+                  oldestDateOlderThan3Days = true;
+                }
               }
             }
           }
-          if (messages.length >= limitCount) {
-            console.log(`[Observer] Total loaded messages (${messages.length}) exceeds limit count (${limitCount}). Stopping scroll.`);
+
+          if (targetId) {
+            for (let i = 0; i < messages.length; i++) {
+              if (messages[i].getAttribute('data-id') === targetId) {
+                // Ensure we scan at least a minimal scroll history buffer or 3 days of history
+                if (oldestDateOlderThan3Days || scrollCount >= 5) {
+                  console.log(`[Observer] Target message ID ${targetId} is visible and history lookback matches. Stopping scroll.`);
+                  return true;
+                }
+              }
+            }
+          } else if (oldestDateOlderThan3Days) {
+            console.log(`[Observer] Reached message older than 3 days. Stopping scroll.`);
             return true;
           }
           return false;
