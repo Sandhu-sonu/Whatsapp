@@ -54,12 +54,16 @@ export default function MessagesPage() {
     return sender.includes(query) || text.includes(query);
   });
 
-  const formatTime = (isoString: string) => {
+  const formatDateTime = (isoString: string) => {
     try {
       const d = new Date(isoString);
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return `${day}-${month}-${year} ${time}`;
     } catch (e) {
-      return '--:--';
+      return '--/--/---- --:--:--';
     }
   };
 
@@ -135,7 +139,7 @@ export default function MessagesPage() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase text-[9px] font-mono tracking-wider">
-                  <th className="py-3 px-4 w-24">Time</th>
+                  <th className="py-3 px-4 w-44">Received At</th>
                   <th className="py-3 px-4 w-40">Sender</th>
                   <th className="py-3 px-4 w-28">Type</th>
                   <th className="py-3 px-4">Preview</th>
@@ -146,7 +150,7 @@ export default function MessagesPage() {
                 {filteredMessages.map((msg) => (
                   <tr key={msg.id} className="odd:bg-white even:bg-slate-50/30 hover:bg-slate-50 text-slate-750 transition duration-150">
                     <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
-                      {formatTime(msg.receivedAt)}
+                      {formatDateTime(msg.receivedAt)}
                     </td>
                     <td className="py-3 px-4 font-bold text-slate-800">
                       {msg.sender || 'Unknown'}
