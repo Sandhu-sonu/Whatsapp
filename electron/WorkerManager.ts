@@ -592,6 +592,11 @@ this.workerProcess.on("message", (message) => {
   private transitionState(newState: WorkerState, error?: string, progress?: string) {
     this.state = newState;
     this.progressMessage = progress;
+    
+    if (newState === 'MONITORING') {
+      this.restartAttempts = 0;
+    }
+
     if (error) {
       this.lastError = error;
       this.appendLog('main.log', `[STATE] Transitioned to ERROR: ${error}`);

@@ -44,6 +44,7 @@ export default function SettingsPage() {
   const [backupFolder, setBackupFolder] = useState('');
   const [autoBackupSchedule, setAutoBackupSchedule] = useState('Daily');
   const [retentionPolicy, setRetentionPolicy] = useState('30');
+  const [maxBackupCount, setMaxBackupCount] = useState('10');
   
   const [theme, setTheme] = useState('light');
   
@@ -73,6 +74,7 @@ export default function SettingsPage() {
         setBackupFolder(settings['Backup Folder'] || '');
         setAutoBackupSchedule(settings['Auto Backup Schedule'] || 'Daily');
         setRetentionPolicy(settings['Retention Policy'] || '30');
+        setMaxBackupCount(settings['Max Backup Count'] || '10');
         setTheme(settings['Theme'] || 'light');
         setLoading(false);
       })
@@ -311,7 +313,7 @@ export default function SettingsPage() {
                   <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Database & Backup Rules</h2>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
                     <div className="flex justify-between items-center mb-1">
                       <label className="text-[10px] font-bold text-slate-500 uppercase">Backup Folder Path</label>
@@ -352,6 +354,20 @@ export default function SettingsPage() {
                       value={retentionPolicy}
                       onChange={(e) => handleChange('Retention Policy', e.target.value, setRetentionPolicy)}
                       className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Max Backups to Keep</label>
+                      {saveStatus['Max Backup Count'] && <span className="text-[10px] text-emerald-600 font-bold font-mono">Saved</span>}
+                    </div>
+                    <input
+                      type="number"
+                      value={maxBackupCount}
+                      onChange={(e) => handleChange('Max Backup Count', e.target.value, setMaxBackupCount)}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono"
+                      placeholder="10"
                     />
                   </div>
                 </div>

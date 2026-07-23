@@ -21,6 +21,7 @@ export default function PendingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [templateType, setTemplateType] = useState<'reminder' | 'summary' | 'missing_bullets' | 'comma_list'>('reminder');
 
   useEffect(() => {
     // Fetch districts once
@@ -83,17 +84,37 @@ export default function PendingPage() {
 
   const pendingDistricts = districts.filter(d => !submittedIds.has(d.id));
 
-  // Generate reminder text template
-  const generateReminderText = () => {
+  // Generate text template based on selected type
+  const generateText = () => {
     if (pendingDistricts.length === 0) return '';
-    const bullets = pendingDistricts.map(d => `• ${d.name}`).join('\n');
     const formattedDate = reportDate ? reportDate.split('-').reverse().join('-') : '';
     const dateText = formattedDate ? `the DSD Performance Report of ${formattedDate}` : "today's DSD Performance Report";
-    return `*Reminder*\n\nThe following districts have not submitted ${dateText}:\n\n${bullets}\n\nKindly submit the report at the earliest.`;
+    
+    switch (templateType) {
+      case 'reminder': {
+        const bullets = pendingDistricts.map(d => `• ${d.name}`).join('\n');
+        return `*Reminder*\n\nThe following districts have not submitted ${dateText}:\n\n${bullets}\n\nKindly submit the report at the earliest.`;
+      }
+      case 'summary': {
+        const totalDistricts = districts.length;
+        const pendingCount = pendingDistricts.length;
+        const submittedCount = totalDistricts - pendingCount;
+        const summaryBullets = pendingDistricts.map(d => `• ${d.name}`).join('\n');
+        return `*DSD Performance Update*\n\nReport Date: ${formattedDate || 'Today'}\n\nSubmitted: ${submittedCount}/${totalDistricts}\n\n*Pending Districts:*\n${summaryBullets}\n\nKindly submit today's DSD report at the earliest.\n\nThanks.`;
+      }
+      case 'missing_bullets': {
+        return pendingDistricts.map(d => `• ${d.name}`).join('\n');
+      }
+      case 'comma_list': {
+        return pendingDistricts.map(d => d.name).join(', ');
+      }
+      default:
+        return '';
+    }
   };
 
   const handleCopyReminder = () => {
-    const text = generateReminderText();
+    const text = generateText();
     if (!text) return;
     navigator.clipboard.writeText(text)
       .then(() => {
@@ -169,20 +190,68 @@ export default function PendingPage() {
           {/* Right Panel: Reminder Generator */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-sm">
             <div className="space-y-4 flex-1 flex flex-col">
-              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider border-b border-slate-100 pb-2 flex items-center">
-                <Copy size={14} className="mr-1.5 text-blue-600" />
-                WhatsApp Reminder Generator
-              </h3>
+              <div className="border-b border-slate-100 pb-2 flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center">
+                  <Copy size={14} className="mr-1.5 text-blue-600" />
+                  WhatsApp Template Generator
+                </h3>
+              </div>
 
               {pendingDistricts.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-xs text-slate-450 italic text-center p-6">
                   No reminders to generate since all submissions are complete.
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col space-y-2">
-                  <span className="text-[10px] text-slate-500 uppercase font-semibold">Copyable WhatsApp Format</span>
-                  <div className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-4 font-mono text-xs text-slate-700 leading-relaxed whitespace-pre-wrap select-text max-h-[350px] overflow-y-auto shadow-inner">
-                    {generateReminderText()}
+                <div className="flex-1 flex flex-col space-y-4">
+                  {/* Selector Tabs */}
+                  <div className="flex flex-wrap border-b border-slate-200 text-[10px] uppercase font-bold tracking-wider">
+                    <button
+                      onClick={() => setTemplateType('reminder')}
+                      className={`pb-2 px-3 border-b-2 transition ${
+                        templateType === 'reminder'
+                          ? 'border-blue-600 text-blue-600'
+                          : 'border-transparent text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Full Reminder
+                    </button>
+                    <button
+                      onClick={() => setTemplateType('summary')}
+                      className={`pb-2 px-3 border-b-2 transition ${
+                        templateType === 'summary'
+                          ? 'border-blue-600 text-blue-600'
+                          : 'border-transparent text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Update Summary
+                    </button>
+                    <button
+                      onClick={() => setTemplateType('missing_bullets')}
+                      className={`pb-2 px-3 border-b-2 transition ${
+                        templateType === 'missing_bullets'
+                          ? 'border-blue-600 text-blue-600'
+                          : 'border-transparent text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Missing List
+                    </button>
+                    <button
+                      onClick={() => setTemplateType('comma_list')}
+                      className={`pb-2 px-3 border-b-2 transition ${
+                        templateType === 'comma_list'
+                          ? 'border-blue-600 text-blue-600'
+                          : 'border-transparent text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      Names Only
+                    </button>
+                  </div>
+
+                  <div className="flex-1 flex flex-col space-y-2">
+                    <span className="text-[10px] text-slate-500 uppercase font-semibold">Copyable WhatsApp Format</span>
+                    <div className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-4 font-mono text-xs text-slate-700 leading-relaxed whitespace-pre-wrap select-text h-[250px] max-h-[300px] overflow-y-auto shadow-inner">
+                      {generateText()}
+                    </div>
                   </div>
                 </div>
               )}

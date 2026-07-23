@@ -1,6 +1,7 @@
 import { PrismaClient } from '../generated/prisma-client';
 import path from 'path';
 import fs from 'fs';
+import { logger } from './logger';
 
 const absoluteDbPath = __dirname.includes('dist-electron')
   ? path.resolve(__dirname, '../../../prisma/database/dsd-tracker.db')
@@ -16,7 +17,7 @@ if (typeof process !== 'undefined' && process.versions && process.versions.elect
       const isDev = !app.isPackaged;
       const dbDir = isDev
         ? path.join(app.getAppPath(), 'database')
-        : app.getPath('userData');
+        : path.join(app.getPath('userData'), 'database');
 
       if (!fs.existsSync(dbDir)) {
         fs.mkdirSync(dbDir, { recursive: true });
@@ -45,3 +46,17 @@ export const prisma = new PrismaClient({
   },
   log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
 });
+
+// Configure SQLite WAL mode and performance pragmas on connection load
+(async () => {
+  try {
+    await prisma.$executeRawUnsafe('PRAGMA journal_mode=WAL;');
+    await prisma.$executeRawUnsafe('PRAGMA synchronous=NORMAL;');
+    await prisma.$executeRawUnsafe('PRAGMA foreign_keys=ON;');
+    await prisma.$executeRawUnsafe('PRAGMA busy_timeout=5000;');
+    await prisma.$executeRawUnsafe('PRAGMA temp_store=MEMORY;');
+    logger.info('Prisma Client: SQLite database configured with WAL and performance pragmas successfully.');
+  } catch (error) {
+    logger.error(error, 'Prisma Client: Failed to apply SQLite performance pragmas');
+  }
+})();

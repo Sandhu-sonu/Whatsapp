@@ -2,8 +2,7 @@ import { PlaywrightService } from './browser';
 import { WorkerStateManager } from './state';
 import { MainToWorkerMessage, WorkerState, WorkerLogLevel } from './events';
 
-import { loginSelectors } from './selectors/login';
-import { chatSelectors } from './selectors/chat';
+import { SELECTORS } from './selectors';
 
 let playwrightService: PlaywrightService | null = null;
 let heartbeatInterval: NodeJS.Timeout | null = null;
@@ -70,8 +69,8 @@ async function startWorker(
     let qrScanChecked = 0;
 
     while (stateManager.get() !== 'STOPPED' && stateManager.get() !== 'ERROR') {
-      const isQrCanvas = await page.$(loginSelectors.qrCanvas);
-      const isChatList = await page.$(chatSelectors.chatList);
+      const isQrCanvas = await page.$(SELECTORS.qrCanvas);
+      const isChatList = await page.$(SELECTORS.chatList);
 
       if (isChatList) {
         if (stateManager.get() === 'WAITING_FOR_QR') {
@@ -106,7 +105,7 @@ async function startWorker(
     }
 
     // Wait until WhatsApp fully loads (indicated by search input visibility)
-    const searchBox = page.locator(chatSelectors.searchInput).first();
+    const searchBox = page.locator(SELECTORS.searchInput).first();
     await searchBox.waitFor({ state: 'visible', timeout: 45000 });
     sendLog('info', '[Worker] WhatsApp loaded');
 
@@ -127,13 +126,13 @@ async function startWorker(
     
     await chatLocator.waitFor({ state: 'visible', timeout: 15000 });
     // Click the whole chat row instead of the title using native Playwright clicks
-    const rowLocator = page.locator('[data-testid="list-item"]').filter({ has: chatLocator }).first();
+    const rowLocator = page.locator(SELECTORS.listItem).filter({ has: chatLocator }).first();
     if (await rowLocator.count() > 0) {
-      sendLog('info', `[Worker] Chat row found, clicking via Playwright...`);
-      await rowLocator.click();
+       sendLog('info', `[Worker] Chat row found, clicking via Playwright...`);
+       await rowLocator.click();
     } else {
-      sendLog('info', `[Worker] Chat row not found, clicking title locator directly...`);
-      await chatLocator.click();
+       sendLog('info', `[Worker] Chat row not found, clicking title locator directly...`);
+       await chatLocator.click();
     }
 
     await page.waitForTimeout(1500);
@@ -141,7 +140,7 @@ async function startWorker(
 
     if (!found) {
       const visibleTitles = await page
-        .locator('[data-testid="cell-frame-title"] span[title]')
+        .locator(SELECTORS.cellFrameTitle)
         .allTextContents();
 
       sendLog(
@@ -178,18 +177,8 @@ async function startWorker(
     // succeeded. We only throw here if the earlier search/click step
     // itself failed (handled above by the `found` check), not because
     // this best-effort confirmation couldn't find a matching element.
-    const composerSelectors = [
-      'footer [contenteditable="true"]',
-      'div[data-testid="conversation-compose-box-input"]',
-      'div[aria-label="Type a message"]',
-      'div[title="Type a message"]',
-    ].join(', ');
-
-    const conversationPaneSelectors = [
-      '[data-testid="conversation-panel-body"]',
-      '[data-testid="conversation-panel-messages"]',
-      'div[role="application"]',
-    ].join(', ');
+    const composerSelectors = SELECTORS.composer;
+    const conversationPaneSelectors = SELECTORS.conversationPanel;
 
     let verified = false;
 
@@ -204,7 +193,7 @@ async function startWorker(
     if (!verified) {
       try {
         await page
-          .locator('[data-testid="cell-frame-title"] span[title]')
+          .locator(SELECTORS.cellFrameTitle)
           .first()
           .waitFor({ state: 'hidden', timeout: 4000 });
         sendLog('info', '[Worker] Verified via search results clearing');
@@ -541,19 +530,24 @@ async function startWorker(
   }
 }
 
-async function stopWorker() {
-  sendLog('info', 'Stopping worker services...');
-  stateManager.set('STOPPED');
-
+async function cleanupAndExit(exitCode: number) {
   clearHeartbeat();
-
-  if (playwrightService) {
-    await playwrightService.close();
-    playwrightService = null;
+  try {
+    if (playwrightService) {
+      sendLog('info', '[Worker] Cleaning up and closing Playwright browser context...');
+      await playwrightService.close();
+      playwrightService = null;
+    }
+  } catch (err: any) {
+    // Suppress clean up logs during final exits to avoid loop
   }
-
-  sendLog('info', 'Worker fully stopped.');
-  process.exit(0);
+  
+  sendLog('info', `[Worker] Process exiting with code: ${exitCode}`);
+  
+  // Allow brief window for logs to flush to IPC
+  setTimeout(() => {
+    process.exit(exitCode);
+  }, 500);
 }
 
 // Parent Process Message Listener
@@ -570,36 +564,39 @@ process.on('message', async (message: MainToWorkerMessage) => {
     // Run async setup
     await startWorker(headless, groupName, profilePath, recoveryScanCount || 500, lastProcessedWhatsAppId);
   } else if (message.type === 'STOP_WORKER') {
-    await stopWorker();
+    stateManager.set('STOPPED');
+    await cleanupAndExit(0);
   }
+});
+
+// Parent IPC disconnect event (detect crash/exit of parent process)
+process.on('disconnect', async () => {
+  sendLog('warn', '[Worker] Parent process IPC channel disconnected (parent exited). Shutting down...');
+  await cleanupAndExit(0);
 });
 
 // Graceful exit listeners
 process.on('SIGINT', async () => {
-  sendLog('info', 'Received SIGINT. Shutting down worker...');
-  await stopWorker();
+  sendLog('info', '[Worker] Received SIGINT. Shutting down worker...');
+  await cleanupAndExit(0);
 });
 
 process.on('SIGTERM', async () => {
-  sendLog('info', 'Received SIGTERM. Shutting down worker...');
-  await stopWorker();
+  sendLog('info', '[Worker] Received SIGTERM. Shutting down worker...');
+  await cleanupAndExit(0);
 });
 
-// Crash & exception handlers (single source of truth — no duplicate no-op
-// listeners registered elsewhere in this file)
+// Crash & exception handlers (single source of truth)
 process.on('uncaughtException', async (error: Error) => {
-  sendLog('error', `Uncaught exception in worker process: ${error.message}`, { stack: error.stack });
+  sendLog('error', `[Worker] Uncaught exception: ${error.message}`, { stack: error.stack });
   stateManager.set('ERROR', error.message);
-  clearHeartbeat();
-  // Ensure logs write before exit
-  setTimeout(() => process.exit(1), 1000);
+  await cleanupAndExit(1);
 });
 
 process.on('unhandledRejection', async (reason: any) => {
   const msg = reason instanceof Error ? reason.message : String(reason);
   const stack = reason instanceof Error ? reason.stack : undefined;
-  sendLog('error', `Unhandled rejection in worker process: ${msg}`, { stack });
+  sendLog('error', `[Worker] Unhandled rejection: ${msg}`, { stack });
   stateManager.set('ERROR', msg);
-  clearHeartbeat();
-  setTimeout(() => process.exit(1), 1000);
+  await cleanupAndExit(1);
 });
