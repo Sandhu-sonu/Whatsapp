@@ -236,6 +236,21 @@ export async function parseReport(messageText: string, messageReceivedAt: Date):
     reportDate = new Date(Date.UTC(1970, 0, 1, 0, 0, 0, 0));
     dateTrace = 'Could not parse date (Epoch fallback)';
   }
+
+  // Auto-correct today-date typos for mid-day submissions (before 5:00 PM / 17:00 local time)
+  if (dateMatched && reportDate) {
+    const reportDateStr = reportDate.toISOString().split('T')[0];
+    const receivedDateStr = messageReceivedAt.toISOString().split('T')[0];
+    if (reportDateStr === receivedDateStr) {
+      const receivedLocalHour = messageReceivedAt.getHours();
+      if (receivedLocalHour < 17) {
+        const correctedDate = new Date(reportDate);
+        correctedDate.setDate(correctedDate.getDate() - 1);
+        reportDate = correctedDate;
+        dateTrace = `${dateTrace} (Auto-corrected same-day mid-day submission date to yesterday: ${reportDate.toISOString().split('T')[0]})`;
+      }
+    }
+  }
   trace.date = dateTrace;
 
   // 4. FUZZY DISTRICT MATCHING (CANDIDATE-BASED)
