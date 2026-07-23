@@ -46,7 +46,13 @@ function clearHeartbeat() {
   }
 }
 
-async function startWorker(headless: boolean, groupName: string, profilePath: string) {
+async function startWorker(
+  headless: boolean,
+  groupName: string,
+  profilePath: string,
+  recoveryScanCount: number = 500,
+  lastProcessedWhatsAppId?: string
+) {
   stateManager.set('STARTING');
   playwrightService = new PlaywrightService((level, msg, meta) => sendLog(level, msg, meta));
 
@@ -120,18 +126,15 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
     const chatLocator = page.locator(`span[title="${escapedGroupName}" i]`).first();
     
     await chatLocator.waitFor({ state: 'visible', timeout: 15000 });
-    sendLog('info', `[Worker] Chat found, clicking to open...`);
-
-    // Click the whole chat row instead of the title
-    await chatLocator.evaluate((el) => {
-      const htmlEl = el as HTMLElement;
-      const row = htmlEl.closest('[data-testid="list-item"]') as HTMLElement | null;
-      if (row) {
-        row.click();
-      } else {
-        htmlEl.click();
-      }
-    });
+    // Click the whole chat row instead of the title using native Playwright clicks
+    const rowLocator = page.locator('[data-testid="list-item"]').filter({ has: chatLocator }).first();
+    if (await rowLocator.count() > 0) {
+      sendLog('info', `[Worker] Chat row found, clicking via Playwright...`);
+      await rowLocator.click();
+    } else {
+      sendLog('info', `[Worker] Chat row not found, clicking title locator directly...`);
+      await chatLocator.click();
+    }
 
     await page.waitForTimeout(1500);
     let found = true;
@@ -220,13 +223,11 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
         // no conversation pane match either — fall through to soft fallback below
       }
     }
+    let groupOpened = verified;
 
-    if (!verified) {
-      // Temporary fallback: don't fail the worker over a selector that
-      // WhatsApp has likely changed again. Give the UI a moment to settle
-      // and proceed to monitoring rather than throwing.
+    if (!groupOpened) {
       sendLog(
-        'info',
+        'warn',
         '[Worker] Could not positively verify group opened via known selectors; proceeding anyway'
       );
       await page.waitForTimeout(2000);
@@ -250,45 +251,90 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
       }
     });
 
+    const recoveryMetrics = {
+      startedAt: new Date().toISOString(),
+      errors: 0
+    };
+
+    await page.exposeFunction('onRecoveryProgress', (progressText: string) => {
+      stateManager.set('RECOVERY_SYNCING', undefined, progressText);
+    });
+
+    await page.exposeFunction('onRecoveryScanCompleted', async (stats: any) => {
+      const finishedAt = new Date().toISOString();
+      const durationMs = Date.now() - new Date(recoveryMetrics.startedAt).getTime();
+      const msgPerSec = stats.scannedCount / (durationMs / 1000 || 1);
+
+      let oldestId = undefined;
+      let latestId = undefined;
+      try {
+        const ids = await page.evaluate(() => {
+          const els = Array.from(document.querySelectorAll('[data-id]'));
+          return els.map(el => el.getAttribute('data-id')).filter(Boolean);
+        });
+        if (ids.length > 0) {
+          oldestId = ids[0];
+          latestId = ids[ids.length - 1];
+        }
+      } catch (err) {}
+
+      const auditPayload = {
+        scanned: stats.scannedCount,
+        alreadyStored: 0,
+        newMessages: 0,
+        reportsParsed: 0,
+        ignored: 0,
+        duplicatesSkipped: 0,
+        errors: recoveryMetrics.errors,
+        startedAt: recoveryMetrics.startedAt,
+        finishedAt,
+        durationMs,
+        msgPerSec: parseFloat(msgPerSec.toFixed(2)),
+        latestId,
+        oldestId
+      };
+
+      sendLog('info', `Recovery Scan Completed: ${stats.scannedCount} scanned.`);
+      
+      if (process.send) {
+        process.send({
+          type: 'RECOVERY_AUDIT',
+          payload: auditPayload
+        });
+      }
+
+      stateManager.set('MONITORING');
+    });
+
     // Forward browser console logs to the worker log
     page.on('console', (msg) => {
-          sendLog('debug', `[Browser Console ${msg.type()}] ${msg.text()}`);
+      sendLog('debug', `[Browser Console ${msg.type()}] ${msg.text()}`);
     });
 
     // ------------------------------------------------------------
     // Install MutationObserver
     // ------------------------------------------------------------
-    await page.evaluate(() => {
-      console.log('MutationObserver installed');
+    await page.evaluate(({ lastProcessedWhatsAppId, recoveryScanCount }) => {
+      console.log('MutationObserver installed, parameters:', { lastProcessedWhatsAppId, recoveryScanCount });
 
       const seenIds = new Set<string>();
 
       const processMessage = (el: Element, timeOffsetMs: number = 0) => {
-        // Some WhatsApp Web builds don't put data-id directly on the
-        // message container, and the mutation target is often a deep
-        // child (e.g. the text span), not the id-bearing wrapper. Check
-        // the nearest ancestor with data-id first (closest() also covers
-        // el itself if it matches), then fall back to a descendant.
-        let idSource: Element | null =
-          el.closest('[data-id]') ?? el.querySelector('[data-id]');
+        let idSource = el.closest('[data-id]') ?? el.querySelector('[data-id]');
 
         if (!idSource) {
-          console.log('[Observer] processMessage: No data-id source found');
           return;
         }
 
         const id = idSource.getAttribute('data-id');
         if (!id) {
-          console.log('[Observer] processMessage: data-id attribute is empty');
           return;
         }
 
         if (seenIds.has(id)) {
-          // Quiet skip for backlog
           return;
         }
 
-        console.log(`[Observer] processMessage: Processing new message ID=${id}`);
         seenIds.add(id);
 
         let sender = 'Unknown';
@@ -299,7 +345,6 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
         const isFromMe = id.startsWith('true_');
         if (isFromMe) sender = 'You';
 
-        // Parse sender number/JID from ID prefix (e.g. false_919988776655@c.us_3EB...)
         const idParts = id.split('_');
         if (idParts.length > 1) {
           senderNumber = idParts[1];
@@ -313,13 +358,6 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
           if (match && match[1]) sender = match[1].trim();
         }
 
-        // Prefer the dedicated message-text node, in order of specificity.
-        // Deliberately does NOT depend on `.copyable-text` being the
-        // parent (that assumption doesn't hold on every WhatsApp Web
-        // build), and deliberately does NOT fall back to a bare
-        // `querySelector('span')`, since the first <span> in a message
-        // container is often a timestamp, checkmark, or sender-name span
-        // rather than the message body.
         const textEl =
           el.querySelector('[data-testid="msg-text"]') ||
           el.querySelector('span.selectable-text') ||
@@ -332,8 +370,6 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
           message = (el as HTMLElement).innerText?.trim() || '';
         }
 
-        // Detect message type using specific media markers only —
-        // a bare `img` also matches emoji, so don't use that alone.
         if (
           el.querySelector('[data-testid="image-thumb"]') ||
           el.querySelector('img[src^="blob:"]')
@@ -358,7 +394,6 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
           messageType = 'STICKER';
         }
 
-        console.log(`[Observer] processMessage: Dispatching captured message from ${sender}`);
         (window as any).onNewMessageCaptured({
           whatsappId: id,
           sender,
@@ -370,18 +405,17 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
         });
       };
 
-      // Process backlog messages currently in the DOM (recent history backlog).
-      // This ensures that any reports submitted while the worker was offline
-      // are captured and ingested on startup.
       console.log('[Observer] Processing recent history backlog...');
       document.querySelectorAll('[data-id]').forEach((el, index) => {
         processMessage(el, index);
       });
 
-      // Find the scroll container dynamically by locating a message and going up to its scrollable parent,
-      // falling back to known selectors if no messages are rendered yet.
       let scrollContainer: HTMLElement | null = null;
-      const messageEl = document.querySelector('[data-id]');
+      const messageEl = 
+        document.querySelector('[data-testid="conversation-panel-messages"] [data-id]') ||
+        document.querySelector('.copyable-area [data-id]') ||
+        document.querySelector('[role="application"] [data-id]') ||
+        document.querySelector('[data-id]');
       if (messageEl) {
         let parent = messageEl.parentElement;
         while (parent && parent !== document.body) {
@@ -393,41 +427,54 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
         }
       }
 
-      if (!scrollContainer) {
-        const scrollSelectors = [
-          '[data-testid="conversation-panel-body"]',
-          '.copyable-area',
-          'div[role="application"]'
-        ];
-        for (const selector of scrollSelectors) {
-          const el = document.querySelector(selector) as HTMLElement | null;
-          if (el && el.scrollHeight > el.clientHeight) {
-            scrollContainer = el;
-            break;
-          }
-        }
-      }
-
       if (scrollContainer) {
         console.log('[Observer] Scroll container found. Starting automatic history load...');
         
         let scrollCount = 0;
-        const maxScrolls = 80; // Scroll up 80 times to load older messages
-        
+        const maxScrolls = 30; 
+        const limitCount = recoveryScanCount || 500;
+        const targetId = lastProcessedWhatsAppId;
+        let isRecoveryFinished = false;
+
+        const checkStoppingCondition = (): boolean => {
+          const messages = document.querySelectorAll('[data-testid="conversation-panel-messages"] [data-id]') || document.querySelectorAll('[data-id]');
+          if (targetId) {
+            for (let i = 0; i < messages.length; i++) {
+              if (messages[i].getAttribute('data-id') === targetId) {
+                console.log(`[Observer] Target message ID ${targetId} is visible. Stopping scroll.`);
+                return true;
+              }
+            }
+          }
+          if (messages.length >= limitCount) {
+            console.log(`[Observer] Total loaded messages (${messages.length}) exceeds limit count (${limitCount}). Stopping scroll.`);
+            return true;
+          }
+          return false;
+        };
+
         const performScroll = () => {
-          if (scrollCount >= maxScrolls) {
-            console.log('[Observer] Finished automatic history load.');
+          if (isRecoveryFinished) return;
+
+          if (checkStoppingCondition() || scrollCount >= maxScrolls) {
+            console.log('[Observer] Finished recovery history load.');
+            isRecoveryFinished = true;
+            (window as any).onRecoveryScanCompleted({
+              scannedCount: document.querySelectorAll('[data-id]').length,
+              scrollCount
+            });
             return;
           }
           
           console.log(`[Observer] Scrolling up (step ${scrollCount + 1}/${maxScrolls})...`);
+          (window as any).onRecoveryProgress(`Scanned ${document.querySelectorAll('[data-id]').length} messages...`);
+
           if (scrollContainer) {
-            scrollContainer.scrollTop = 0; // Scroll to top to trigger WhatsApp loading history
+            scrollContainer.scrollTop = 0; 
             scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
           }
           scrollCount++;
           
-          // Wait 1.5 seconds for WhatsApp Web to fetch, then scan DOM and scroll again
           setTimeout(() => {
             document.querySelectorAll('[data-id]').forEach((el, index) => {
               processMessage(el, index);
@@ -436,10 +483,13 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
           }, 1500);
         };
         
-        // Start scrolling after a short delay to let the DOM settle
         setTimeout(performScroll, 2000);
       } else {
         console.log('[Observer] Scroll container NOT found');
+        (window as any).onRecoveryScanCompleted({
+          scannedCount: document.querySelectorAll('[data-id]').length,
+          scrollCount: 0
+        });
       }
 
       const observer = new MutationObserver((mutations) => {
@@ -448,16 +498,12 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
           for (const mutation of mutations) {
             if (mutation.type === 'childList') {
               mutation.addedNodes.forEach((node) => {
-                if (node.nodeType !== 1) return; // 1 = Element
+                if (node.nodeType !== 1) return;
                 const el = node as Element;
-
-                // Case 1: Check if the added node itself or its ancestor has data-id
                 const parentIdSource = el.closest('[data-id]');
                 if (parentIdSource) {
                   processMessage(parentIdSource, mutationIndex++);
                 }
-
-                // Case 2: Check if the added node contains children with data-id
                 el.querySelectorAll?.('[data-id]').forEach((child) => {
                   processMessage(child, mutationIndex++);
                 });
@@ -480,7 +526,7 @@ async function startWorker(headless: boolean, groupName: string, profilePath: st
         attributes: true,
         attributeFilter: ['data-id'],
       });
-    });
+    }, { lastProcessedWhatsAppId, recoveryScanCount });
 
     sendLog('info', '[Worker] Monitoring started');
     stateManager.set('MONITORING');
@@ -513,7 +559,7 @@ async function stopWorker() {
 // Parent Process Message Listener
 process.on('message', async (message: MainToWorkerMessage) => {
   if (message.type === 'START_WORKER') {
-    const { headless, groupName, profilePath } = message.payload;
+    const { headless, groupName, profilePath, recoveryScanCount, lastProcessedWhatsAppId } = message.payload;
 
     // Heartbeat ticker (every 30 seconds)
     clearHeartbeat();
@@ -522,7 +568,7 @@ process.on('message', async (message: MainToWorkerMessage) => {
     }, 30000);
 
     // Run async setup
-    await startWorker(headless, groupName, profilePath);
+    await startWorker(headless, groupName, profilePath, recoveryScanCount || 500, lastProcessedWhatsAppId);
   } else if (message.type === 'STOP_WORKER') {
     await stopWorker();
   }

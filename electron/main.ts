@@ -882,19 +882,7 @@ app.whenReady().then(async () => {
       }
     }, 60 * 60 * 1000);
 
-    // 5. Auto-resume worker if it was running before crash/exit
-    try {
-      const state = workerManager.getStatus().workerState;
-      if (state === 'MONITORING' || state === 'RECOVERY_SYNCING' || state === 'STARTING' || state === 'OPENING_BROWSER') {
-        logger.info({ previousState: state }, 'Auto-resuming worker process after crash/restart...');
-        const settings = await SettingRepository.getAll();
-        const groupName = settings.groupName || 'DSD Monitoring';
-        const headless = settings.headless === 'true';
-        await workerManager.start(groupName, headless);
-      }
-    } catch (err) {
-      logger.error(err, 'Failed to auto-resume worker process');
-    }
+    // 5. Worker starting is manual on launch
   } catch (error) {
     logger.error({ error }, 'Startup initialization failed');
   }

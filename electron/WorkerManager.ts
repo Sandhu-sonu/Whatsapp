@@ -8,6 +8,8 @@ import { logger } from '../src/lib/logger';
 import { MessageRepository } from '../src/repositories/MessageRepository';
 import { parseReport } from '../src/lib/parser/pipeline';
 import { SubmissionRepository } from '../src/repositories/SubmissionRepository';
+import { prisma } from '../src/lib/prisma';
+import { SettingRepository } from '../src/repositories/SettingRepository';
 
 export interface Diagnostics {
   workerPid?: number;
@@ -47,21 +49,122 @@ export class WorkerManager {
 
   private onStateChangeCallback: (state: WorkerState) => void;
 
+  // Crash / Recovery state fields
+  private lastProcessedWhatsAppId?: string;
+  private lastRecoveryScan: any = null;
+  private progressMessage?: string;
+  private recoveryStats = {
+    scanned: 0,
+    alreadyStored: 0,
+    newMessages: 0,
+    reportsParsed: 0,
+    ignored: 0,
+    duplicatesSkipped: 0,
+    errors: 0
+  };
+
   constructor(onStateChange: (state: WorkerState) => void) {
     this.onStateChangeCallback = onStateChange;
+    this.loadWorkerStateFile();
+  }
+
+  private getWorkerStateFilePath() {
+    const isDev = !app.isPackaged;
+    const dir = isDev ? process.cwd() : app.getPath('userData');
+    return path.join(dir, 'worker-state.json');
+  }
+
+  private saveWorkerStateFile() {
+    try {
+      const filePath = this.getWorkerStateFilePath();
+      const stateObj = {
+        lastProcessedWhatsAppId: this.lastProcessedWhatsAppId,
+        lastRecoveryScan: this.lastRecoveryScan,
+        workerState: this.state,
+        lastSync: this.lastSync
+      };
+      fs.writeFileSync(filePath, JSON.stringify(stateObj, null, 2), 'utf-8');
+    } catch (e) {
+      logger.error(e, 'WorkerManager: Failed to write worker-state.json');
+    }
+  }
+
+  private loadWorkerStateFile() {
+    try {
+      const filePath = this.getWorkerStateFilePath();
+      if (fs.existsSync(filePath)) {
+        const stateObj = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        this.lastProcessedWhatsAppId = stateObj.lastProcessedWhatsAppId;
+        this.lastRecoveryScan = stateObj.lastRecoveryScan;
+        this.lastSync = stateObj.lastSync;
+        // Always start as STOPPED on launch, preventing stale workerState auto-resumes
+        this.state = 'STOPPED';
+      }
+    } catch (e) {
+      logger.error(e, 'WorkerManager: Failed to read worker-state.json');
+    }
   }
 
   // File Logging Helper
   private appendLog(filename: string, message: string) {
     try {
-      const logDir = path.join(process.cwd(), 'logs');
+      const isDev = !app.isPackaged;
+      const logDir = isDev
+        ? path.join(process.cwd(), 'logs')
+        : path.join(app.getPath('userData'), 'logs');
+
       if (!fs.existsSync(logDir)) {
         fs.mkdirSync(logDir, { recursive: true });
       }
+
+      const logPath = path.join(logDir, filename);
       const timestamp = new Date().toISOString();
-      fs.appendFileSync(path.join(logDir, filename), `[${timestamp}] ${message}\n`);
+      fs.appendFileSync(logPath, `[${timestamp}] ${message}\n`);
+
+      // Check size for rotation (2MB)
+      try {
+        const stats = fs.statSync(logPath);
+        if (stats.size > 2 * 1024 * 1024) {
+          this.rotateLogFile(logDir, filename);
+        }
+      } catch (err) {
+        // Ignore stat check failures
+      }
     } catch (e) {
       logger.error('Failed to write to file log: ' + filename);
+    }
+  }
+
+  private rotateLogFile(logDir: string, filename: string) {
+    try {
+      const baseName = path.basename(filename, '.log');
+      const ext = '.log';
+
+      // Remove oldest (.3) if exists
+      const file3 = path.join(logDir, `${baseName}.3${ext}`);
+      if (fs.existsSync(file3)) {
+        fs.unlinkSync(file3);
+      }
+
+      // Rename .2 -> .3
+      const file2 = path.join(logDir, `${baseName}.2${ext}`);
+      if (fs.existsSync(file2)) {
+        fs.renameSync(file2, file3);
+      }
+
+      // Rename .1 -> .2
+      const file1 = path.join(logDir, `${baseName}.1${ext}`);
+      if (fs.existsSync(file1)) {
+        fs.renameSync(file1, file2);
+      }
+
+      // Rename current -> .1
+      const current = path.join(logDir, filename);
+      if (fs.existsSync(current)) {
+        fs.renameSync(current, file1);
+      }
+    } catch (e) {
+      logger.error(e, 'Failed to rotate log file: ' + filename);
     }
   }
 
@@ -84,6 +187,10 @@ export class WorkerManager {
       capturedCount: this.capturedCount,
       duplicateCount: this.duplicateCount,
       lastMessageDetails: this.lastMessageDetails,
+      lastProcessedWhatsAppId: this.lastProcessedWhatsAppId,
+      lastRecoveryScan: this.lastRecoveryScan,
+      progressMessage: this.progressMessage,
+      recoveryStats: this.recoveryStats
     };
   }
 
@@ -235,27 +342,64 @@ this.workerProcess.on("message", (message) => {
 
       // Dispatch START Command
       // Wait until the child has spawned before sending START_WORKER
-const payload: StartWorkerPayload = {
-  headless: this.headless,
-  groupName: this.groupName,
-  profilePath: this.getSessionPath(),
-};
+      this.workerProcess.once("spawn", async () => {
+        console.log("✅ Worker spawned");
 
-this.workerProcess.once("spawn", () => {
-  console.log("✅ Worker spawned");
+        if (!this.workerProcess?.connected) {
+          console.error("Worker IPC is not connected.");
+          return;
+        }
 
-  if (!this.workerProcess?.connected) {
-    console.error("Worker IPC is not connected.");
-    return;
-  }
+        // Get last processed WhatsApp ID from SQLite
+        let lastProcessedWhatsAppId = undefined;
+        try {
+          const lastMessage = await prisma.whatsAppMessage.findFirst({
+            orderBy: { receivedAt: 'desc' },
+            where: { ingestionStatus: 'PARSED' }
+          });
+          if (lastMessage) {
+            lastProcessedWhatsAppId = lastMessage.whatsappId;
+          }
+        } catch (e) {
+          logger.error(e, 'WorkerManager: Failed to fetch lastProcessedWhatsAppId');
+        }
 
-  console.log("📤 Sending START_WORKER");
+        // Load settings to fetch recoveryScanCount
+        let recoveryScanCount = 500;
+        try {
+          const settings = await SettingRepository.getAll();
+          if (settings.recoveryScanCount) {
+            recoveryScanCount = parseInt(settings.recoveryScanCount, 10);
+          }
+        } catch (e) {
+          logger.error(e, 'WorkerManager: Failed to fetch recoveryScanCount setting');
+        }
 
-  this.workerProcess.send({
-    type: "START_WORKER",
-    payload,
-  });
-});
+        const payload: StartWorkerPayload = {
+          headless: this.headless,
+          groupName: this.groupName,
+          profilePath: this.getSessionPath(),
+          recoveryScanCount,
+          lastProcessedWhatsAppId,
+        };
+
+        // Reset recoveryStats for a fresh recovery scan audit
+        this.recoveryStats = {
+          scanned: 0,
+          alreadyStored: 0,
+          newMessages: 0,
+          reportsParsed: 0,
+          ignored: 0,
+          duplicatesSkipped: 0,
+          errors: 0
+        };
+
+        console.log("📤 Sending START_WORKER", payload);
+        this.workerProcess.send({
+          type: "START_WORKER",
+          payload,
+        });
+      });
 
     } catch (e: any) {
       this.clearStartupTimeout();
@@ -291,7 +435,7 @@ this.workerProcess.once("spawn", () => {
   private handleWorkerMessage(message: any) {
     switch (message.type) {
       case 'STATE_CHANGE':
-        this.transitionState(message.payload.state, message.payload.error);
+        this.transitionState(message.payload.state, message.payload.error, message.payload.progress);
         break;
 
       case 'HEARTBEAT':
@@ -305,6 +449,28 @@ this.workerProcess.once("spawn", () => {
       case 'MESSAGE_RECEIVED':
         this.handleMessageReceived(message.payload);
         break;
+
+      case 'RECOVERY_AUDIT': {
+        const payload = message.payload;
+        this.lastRecoveryScan = {
+          scanned: payload.scanned,
+          alreadyStored: this.recoveryStats.alreadyStored,
+          newMessages: this.recoveryStats.newMessages,
+          reportsParsed: this.recoveryStats.reportsParsed,
+          ignored: this.recoveryStats.ignored,
+          duplicatesSkipped: this.recoveryStats.duplicatesSkipped,
+          errors: this.recoveryStats.errors,
+          startedAt: payload.startedAt,
+          finishedAt: payload.finishedAt,
+          durationMs: payload.durationMs,
+          msgPerSec: payload.msgPerSec,
+          latestId: payload.latestId,
+          oldestId: payload.oldestId
+        };
+        this.saveWorkerStateFile();
+        this.onStateChangeCallback(this.state);
+        break;
+      }
 
       case 'LOG': {
         const { level, message: logMsg, meta } = message.payload;
@@ -330,6 +496,10 @@ this.workerProcess.once("spawn", () => {
       const duplicate = await MessageRepository.exists(whatsappId);
       if (duplicate) {
         this.duplicateCount++;
+        if (this.state === 'RECOVERY_SYNCING') {
+          this.recoveryStats.alreadyStored++;
+          this.recoveryStats.duplicatesSkipped++;
+        }
         this.appendLog('main.log', `Ignored duplicate message ID: ${whatsappId}`);
         this.onStateChangeCallback(this.state);
         return;
@@ -351,6 +521,10 @@ this.workerProcess.once("spawn", () => {
         receivedAt: new Date(receivedAt),
       });
 
+      if (this.state === 'RECOVERY_SYNCING') {
+        this.recoveryStats.newMessages++;
+      }
+
       this.capturedCount++;
       this.lastMessageDetails = {
         sender: sender || 'Unknown',
@@ -367,16 +541,34 @@ this.workerProcess.once("spawn", () => {
         try {
           const parseResult = await parseReport(message, new Date(receivedAt));
           if (parseResult.districtId) {
+            parseResult.extraMetrics = {
+              ...(parseResult.extraMetrics || {}),
+              source: this.state === 'RECOVERY_SYNCING' ? 'Recovery Scan' : 'WhatsApp Live'
+            };
             await SubmissionRepository.saveParsedReport(createdMessage.id, parseResult);
             parsedReportDate = parseResult.reportDate.toISOString().split('T')[0];
             parsedDistrictName = parseResult.districtName;
             this.appendLog('main.log', `[PARSER] Successfully parsed report for district: ${parseResult.districtName} (Mode: ${parseResult.parserMode})`);
+            
+            // Set last processed WhatsApp ID
+            this.lastProcessedWhatsAppId = whatsappId;
+            this.saveWorkerStateFile();
+
+            if (this.state === 'RECOVERY_SYNCING') {
+              this.recoveryStats.reportsParsed++;
+            }
           } else {
             this.appendLog('main.log', `[PARSER] Skipped message: No district identified.`);
+            if (this.state === 'RECOVERY_SYNCING') {
+              this.recoveryStats.ignored++;
+            }
           }
         } catch (err: any) {
           logger.error('Failed to parse incoming report: ' + err.message);
           this.appendLog('main.log', `[ERROR] Ingestion parsing crash: ${err.message}`);
+          if (this.state === 'RECOVERY_SYNCING') {
+            this.recoveryStats.errors++;
+          }
         }
       }
 
@@ -397,14 +589,15 @@ this.workerProcess.once("spawn", () => {
     }
   }
 
-  private transitionState(newState: WorkerState, error?: string) {
+  private transitionState(newState: WorkerState, error?: string, progress?: string) {
     this.state = newState;
+    this.progressMessage = progress;
     if (error) {
       this.lastError = error;
       this.appendLog('main.log', `[STATE] Transitioned to ERROR: ${error}`);
       this.appendLog('worker.log', `[ERROR] Worker transitioned to ERROR state: ${error}`);
     } else {
-      this.appendLog('main.log', `[STATE] Transitioned to ${newState}`);
+      this.appendLog('main.log', `[STATE] Transitioned to ${newState}${progress ? ` (${progress})` : ''}`);
     }
 
     // Clear timeout if out of STARTING or OPENING_BROWSER
@@ -412,6 +605,7 @@ this.workerProcess.once("spawn", () => {
       this.clearStartupTimeout();
     }
 
+    this.saveWorkerStateFile();
     this.onStateChangeCallback(newState);
   }
 }
